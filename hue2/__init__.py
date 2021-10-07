@@ -96,6 +96,7 @@ class Hue2(SmartPlugin):
         self._cycle_sensors = self.get_parameter_value('polltime_sensors')
         self._cycle_lights = self.get_parameter_value('polltime_lights')
         self._cycle_bridge = self.get_parameter_value('polltime_bridge')
+        self._default_transition_time = int(float(self.get_parameter_value('default_transitionTime'))*10)
 
         # discover hue bridges on the network
         self.discovered_bridges = self.discover_bridges()
@@ -256,31 +257,33 @@ class Hue2(SmartPlugin):
     def update_light_from_item(self, plugin_item, value):
 
         self.logger.debug("update_light_from_item: plugin_item = {}".format(plugin_item))
+        hue_transition_time = self._default_transition_time
+        if 'hue2_transitionTime' in plugin_item.conf:
+            hue_transition_time = int(float(item.conf['hue2_transitionTime']) * 10)
         try:
             if plugin_item['function'] == 'on':
-                self.br.lights(plugin_item['id'], 'state', on=value)
+                self.br.lights(plugin_item['id'], 'state', on=value, transitiontime=hue_transition_time)
             elif plugin_item['function'] == 'bri':
                 if value > 0:
-                    self.br.lights[plugin_item['id']]['state'](on=True, bri=value)
+                    self.br.lights[plugin_item['id']]['state'](on=True, bri=value, transitiontime=hue_transition_time)
                 else:
-                    self.br.lights[plugin_item['id']]['state'](bri=value)
+                    self.br.lights[plugin_item['id']]['state'](bri=value, transitiontime=hue_transition_time)
             elif plugin_item['function'] == 'hue':
-                self.br.lights[plugin_item['id']]['state'](hue=value)
+                self.br.lights[plugin_item['id']]['state'](hue=value, transitiontime=hue_transition_time)
             elif plugin_item['function'] == 'sat':
-                self.br.lights[plugin_item['id']]['state'](sat=value)
+                self.br.lights[plugin_item['id']]['state'](sat=value, transitiontime=hue_transition_time)
             elif plugin_item['function'] == 'ct':
-                self.br.lights[plugin_item['id']]['state'](ct=value)
+                self.br.lights[plugin_item['id']]['state'](ct=value, transitiontime=hue_transition_time)
             elif plugin_item['function'] == 'name':
                 self.br.lights[plugin_item['id']](name=value)
             elif plugin_item['function'] == 'xy':
-                self.br.lights[plugin_item['id']]['state'](xy=value)
+                self.br.lights[plugin_item['id']]['state'](xy=value, transitiontime=hue_transition_time)
             elif plugin_item['function'] == 'alert':
                 self.br.lights[plugin_item['id']]['state'](alert=value)
             elif plugin_item['function'] == 'effect':
                 self.br.lights[plugin_item['id']]['state'](effect=value)
         except qhue.qhue.QhueException as e:
             self.logger.error(f"update_light_from_item: item {plugin_item['item'].id()} - qhue exception '{e}'")
-        return
 
 
     def update_scene_from_item(self, plugin_item, value):
@@ -289,42 +292,42 @@ class Hue2(SmartPlugin):
         if plugin_item['function'] == 'name':
             self.br.scenes[plugin_item['id']](name=value)
 
-        return
-
 
     def update_group_from_item(self, plugin_item, value):
 
         self.logger.debug("update_group_from_item: plugin_item = {} -> value = {}".format(plugin_item, value))
-        if plugin_item['function'] == 'on':
-            self.br.groups(plugin_item['id'], 'action', on=value)
-        elif plugin_item['function'] == 'bri':
-            if value > 0:
-                self.br.groups[plugin_item['id']]['action'](on=True, bri=value)
-            else:
-                self.br.groups[plugin_item['id']]['action'](bri=value)
-        elif plugin_item['function'] == 'hue':
-            self.br.groups[plugin_item['id']]['action'](hue=value)
-        elif plugin_item['function'] == 'sat':
-            self.br.groups[plugin_item['id']]['action'](sat=value)
-        elif plugin_item['function'] == 'ct':
-            self.br.groups[plugin_item['id']]['action'](ct=value)
-        elif plugin_item['function'] == 'name':
-            self.br.groups[plugin_item['id']](name=value)
-        elif plugin_item['function'] == 'xy':
-            self.br.groups[plugin_item['id']]['action'](xy=value)
-        elif plugin_item['function'] == 'activate_scene':
-            self.br.groups(plugin_item['id'], 'action', scene=value)
+        hue_transition_time = self._default_transition_time
+        if 'hue2_transitionTime' in plugin_item.conf:
+            hue_transition_time = int(float(item.conf['hue2_transitionTime']) * 10)
+        try:
+            if plugin_item['function'] == 'on':
+                self.br.groups(plugin_item['id'], 'action', on=value)
+            elif plugin_item['function'] == 'bri':
+                if value > 0:
+                    self.br.groups[plugin_item['id']]['action'](on=True, bri=value, transitiontime=hue_transition_time)
+                else:
+                    self.br.groups[plugin_item['id']]['action'](bri=value, transitiontime=hue_transition_time)
+            elif plugin_item['function'] == 'hue':
+                self.br.groups[plugin_item['id']]['action'](hue=value, transitiontime=hue_transition_time)
+            elif plugin_item['function'] == 'sat':
+                self.br.groups[plugin_item['id']]['action'](sat=value, transitiontime=hue_transition_time)
+            elif plugin_item['function'] == 'ct':
+                self.br.groups[plugin_item['id']]['action'](ct=value, transitiontime=hue_transition_time)
+            elif plugin_item['function'] == 'name':
+                self.br.groups[plugin_item['id']](name=value)
+            elif plugin_item['function'] == 'xy':
+                self.br.groups[plugin_item['id']]['action'](xy=value, transitiontime=hue_transition_time)
+            elif plugin_item['function'] == 'activate_scene':
+                self.br.groups(plugin_item['id'], 'action', scene=value, transitiontime=hue_transition_time)
 
-        return
-
+        except qhue.qhue.QhueException as e:
+            self.logger.error(f"update_group_from_item: item {plugin_item['item'].id()} - qhue exception '{e}'")
 
     def update_sensor_from_item(self, plugin_item, value):
 
         self.logger.debug("update_sensor_from_item: plugin_item = {}".format(plugin_item))
         if plugin_item['function'] == 'name':
             self.br.sensors[plugin_item['id']](name=value)
-
-        return
 
 
     def get_api_config_of_bridge(self, urlbase):
