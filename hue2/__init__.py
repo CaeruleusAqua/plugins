@@ -258,8 +258,8 @@ class Hue2(SmartPlugin):
 
         self.logger.debug("update_light_from_item: plugin_item = {}".format(plugin_item))
         hue_transition_time = self._default_transition_time
-        if 'hue2_transitionTime' in plugin_item.conf:
-            hue_transition_time = int(float(item.conf['hue2_transitionTime']) * 10)
+        if 'hue2_transitionTime' in plugin_item:
+            hue_transition_time = int(float(plugin_item['hue2_transitionTime']) * 10)
         try:
             if plugin_item['function'] == 'on':
                 self.br.lights(plugin_item['id'], 'state', on=value, transitiontime=hue_transition_time)
@@ -297,8 +297,8 @@ class Hue2(SmartPlugin):
 
         self.logger.debug("update_group_from_item: plugin_item = {} -> value = {}".format(plugin_item, value))
         hue_transition_time = self._default_transition_time
-        if 'hue2_transitionTime' in plugin_item.conf:
-            hue_transition_time = int(float(item.conf['hue2_transitionTime']) * 10)
+        if 'hue2_transitionTime' in plugin_item:
+            hue_transition_time = int(float(plugin_item['hue2_transitionTime']) * 10)
         try:
             if plugin_item['function'] == 'on':
                 self.br.groups(plugin_item['id'], 'action', on=value)
