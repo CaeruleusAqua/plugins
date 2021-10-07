@@ -98,8 +98,9 @@ item_attributes:
 
     hue2_transitionTime:
         type: num
-        de: "Zeit für Übergang"
-          en: "RTime for transition"
+        description:
+            de: "Zeit für Übergang"
+            en: "RTime for transition"
 
     hue2_resource:
         type: str
