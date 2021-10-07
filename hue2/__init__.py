@@ -243,23 +243,23 @@ class Hue2(SmartPlugin):
             if item.id() in self.plugin_items:
                 plugin_item = self.plugin_items[item.id()]
                 if plugin_item['resource'] == 'light':
-                    self.update_light_from_item(plugin_item, item())
+                    self.update_light_from_item(plugin_item, item)
                 elif plugin_item['resource'] == 'scene':
-                    self.update_scene_from_item(plugin_item, item())
+                    self.update_scene_from_item(plugin_item, item)
                 elif plugin_item['resource'] == 'group':
-                    self.update_group_from_item(plugin_item, item())
+                    self.update_group_from_item(plugin_item, item)
                 elif plugin_item['resource'] == 'sensor':
-                    self.update_sensor_from_item(plugin_item, item())
+                    self.update_sensor_from_item(plugin_item, item)
 
         return
 
 
-    def update_light_from_item(self, plugin_item, value):
-
+    def update_light_from_item(self, plugin_item, item):
+        value = item()
         self.logger.debug("update_light_from_item: plugin_item = {}".format(plugin_item))
         hue_transition_time = self._default_transition_time
-        if 'hue2_transitionTime' in plugin_item:
-            hue_transition_time = int(float(plugin_item['hue2_transitionTime']) * 10)
+        if 'hue2_transitionTime' in item.conf:
+            hue_transition_time = int(float(item.conf['hue2_transitionTime']) * 10)
         try:
             if plugin_item['function'] == 'on':
                 self.br.lights(plugin_item['id'], 'state', on=value, transitiontime=hue_transition_time)
@@ -286,20 +286,21 @@ class Hue2(SmartPlugin):
             self.logger.error(f"update_light_from_item: item {plugin_item['item'].id()} - qhue exception '{e}'")
 
 
-    def update_scene_from_item(self, plugin_item, value):
+    def update_scene_from_item(self, plugin_item, item):
+        value = item()
 
         self.logger.debug("update_scene_from_item: plugin_item = {}".format(plugin_item))
         if plugin_item['function'] == 'name':
             self.br.scenes[plugin_item['id']](name=value)
 
 
-    def update_group_from_item(self, plugin_item, value):
+    def update_group_from_item(self, plugin_item, item):
+        value = item()
 
         self.logger.debug("update_group_from_item: plugin_item = {} -> value = {}".format(plugin_item, value))
         hue_transition_time = self._default_transition_time
-        if 'hue2_transitionTime' in plugin_item:
-            hue_transition_time = int(float(plugin_item['hue2_transitionTime']) * 10)
-        self.logger.error("hue_transition_time: " + str(hue_transition_time) + " " + str(plugin_item))
+        if 'hue2_transitionTime' in item.conf:
+            hue_transition_time = int(float(item.conf['hue2_transitionTime']) * 10)
         try:
             if plugin_item['function'] == 'on':
                 self.br.groups(plugin_item['id'], 'action', on=value)
@@ -324,8 +325,8 @@ class Hue2(SmartPlugin):
         except qhue.qhue.QhueException as e:
             self.logger.error(f"update_group_from_item: item {plugin_item['item'].id()} - qhue exception '{e}'")
 
-    def update_sensor_from_item(self, plugin_item, value):
-
+    def update_sensor_from_item(self, plugin_item, item):
+        value = item()
         self.logger.debug("update_sensor_from_item: plugin_item = {}".format(plugin_item))
         if plugin_item['function'] == 'name':
             self.br.sensors[plugin_item['id']](name=value)
