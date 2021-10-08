@@ -305,7 +305,7 @@ class Hue2(SmartPlugin):
         self.logger.error("hue_transition_time: " + str(hue_transition_time))
         try:
             if plugin_item['function'] == 'on':
-                self.br.groups(plugin_item['id'], 'action', on=value)
+                self.br.groups(plugin_item['id'], 'action', on=value, transitiontime=hue_transition_time)
             elif plugin_item['function'] == 'bri':
                 if value > 0:
                     self.br.groups[plugin_item['id']]['action'](on=True, bri=value, transitiontime=hue_transition_time)
