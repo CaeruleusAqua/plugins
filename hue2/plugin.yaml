@@ -29,8 +29,8 @@ parameters:
         default: 0.4
         valid_min: 0
         description:
-            de: 'Zeitraum zwischen den den Checks der Leuchten durch die HUE Bridge selbst'
-            en: 'Time in seconds how fast check states of the lamps are changed through the bridge itself'
+            de: 'Zeit in sekunden welche die Leuchte benötigt um in einen neuen Zustand überzugehen'
+            en: 'Time in seconds required for the light to transition to a new state.'
 
     polltime_lights:
         type: int
@@ -99,8 +99,8 @@ item_attributes:
     hue2_transitionTime:
         type: num
         description:
-            de: "Zeit für Übergang"
-            en: "RTime for transition"
+            de: "Zeit für Übergang (in sec)"
+            en: "Time for transition (in sec)"
 
     hue2_resource:
         type: str
