@@ -543,8 +543,7 @@ class HUE(SmartPlugin):
                     # runter
                     item.return_parent().fade(0, valueDimStep, valueDimTime)
             else:
-                # stop, indem man einen wert setzt. da es nicht der gleiche wert sein darf, erst einmal +1, dann -1
-                # das ist aus meiner sicht noch ein fehler in item.py
+                # stoppe den fader
                 parent = item.return_parent()
                 parent._lock.acquire()
                 parent._fading = False
