@@ -65,6 +65,7 @@ KNX_CACHE    = 'knx_cache'        # get item from knx_cache
 KNX_INIT     = 'knx_init'         # query knx upon init
 KNX_LISTEN   = 'knx_listen'       # write or response from knx will change the value of this item
 KNX_POLL     = 'knx_poll'         # query (poll) a ga on knx in regular intervals
+KNX_RATE     = 'knx_rate'         # the maximum rate to write a address to the bus
 
 KNX_DTP      = 'knx_dtp'          # often misspelled argument in config files, instead should be knx_dpt
 
@@ -86,7 +87,7 @@ class KNX(SmartPlugin):
 
     # tags actually used by the plugin are shown here
     # can be used later for backend item editing purposes, to check valid item attributes
-    ITEM_TAG = [KNX_DPT, KNX_STATUS, KNX_SEND, KNX_REPLY, KNX_LISTEN, KNX_INIT, KNX_CACHE, KNX_POLL]
+    ITEM_TAG = [KNX_DPT, KNX_STATUS, KNX_SEND, KNX_REPLY, KNX_LISTEN, KNX_INIT, KNX_CACHE, KNX_POLL, KNX_RATE]
     ITEM_TAG_PLUS = [KNX_DTP]
 
     def __init__(self, smarthome):
@@ -682,6 +683,13 @@ class KNX(SmartPlugin):
         :param source: if given it represents the source
         :param dest: if given it represents the dest
         """
+
+        if self.has_iattr(item.conf, KNX_RATE):
+            rate = float(self.get_iattr_value(item.conf, KNX_RATE))
+            delta = self.shtime.now() - item._get_last_update()
+            if delta.total_seconds() < rate:
+                return
+
         if self.has_iattr(item.conf, KNX_SEND):
             if caller != self.get_shortname():
                 for ga in self.get_iattr_value(item.conf, KNX_SEND):

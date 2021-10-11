@@ -236,6 +236,12 @@ item_attributes:
             de: 'Dieses Attribut setzt den Typ des KNX-Datenpunktes, der für die Konvertierung der KNX-Nachrichten in das interne SmartHomeNG-Format verwendet wird. Die Angabe ist zwingend erforderlich ist. Wenn Sie keinen Wert angeben, wird das Element vom Plugin ignoriert. Der DPT muss dem Typ des Artikels entsprechen!'
             en: "This attribute set the KNX datapoint type used for conversion of the KNX messages to internal SmartHomeNG format. It is mandatory. If you don't provide one the item will be ignored by the plugin. The DPT has to match the type of the item! BE CAREFUL to put the value in quotes to ensure they are interpreted as strings and not as numbers!"
 
+    knx_rate:
+        type: num
+        description:
+            de: 'Minimale Zeit (in Sekunden (float)), der gewartet wird, bevor ein weiterer Wert auf den bus geschrieben wird'
+            en: 'Minimum time (in seconds (float)) to wait before writing another value to the bus'
+
     knx_send:
         type: list(knx_ga)
         description:
