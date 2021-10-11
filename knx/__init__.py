@@ -686,9 +686,16 @@ class KNX(SmartPlugin):
 
         if self.has_iattr(item.conf, KNX_RATE):
             rate = float(self.get_iattr_value(item.conf, KNX_RATE))
-            delta = self.shtime.now() - item._get_last_update()
-            if delta.total_seconds() < rate:
-                return
+            if hasattr(item, 'last_knx_update'):
+                delta = self.shtime.now() - item.last_knx_update
+                if delta.total_seconds() < rate:
+                    return
+                else:
+                    item.last_knx_update = self.shtime.now()
+            else:
+                item.last_knx_update = self.shtime.now()
+
+
 
         if self.has_iattr(item.conf, KNX_SEND):
             if caller != self.get_shortname():
