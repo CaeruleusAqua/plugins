@@ -545,8 +545,11 @@ class HUE(SmartPlugin):
             else:
                 # stop, indem man einen wert setzt. da es nicht der gleiche wert sein darf, erst einmal +1, dann -1
                 # das ist aus meiner sicht noch ein fehler in item.py
-                item.return_parent()(int(item.return_parent()() + 1), 'HUE_FADE')
-                item.return_parent()(int(item.return_parent()() - 1), 'HUE_FADE')
+                parent = item.return_parent()
+                parent._lock.acquire()
+                parent._fading = False
+                parent._lock.notify_all()
+                parent._lock.release()
 
     def  _get_web_content(self, hueBridgeId='0', path='', method='GET', body=None):
         # in dieser routine erfolgt der umbau und die speziellen themen zur auswertung der verbindung, die speziell für das plugin ist
