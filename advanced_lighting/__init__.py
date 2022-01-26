@@ -24,6 +24,7 @@
 #  along with SmartHomeNG. If not, see <http://www.gnu.org/licenses/>.
 #
 #########################################################################
+import datetime
 
 from lib.model.smartplugin import *
 from lib.item import Items
@@ -109,7 +110,7 @@ class AdvancedLighting(SmartPlugin):
                         can be sent to the knx with a knx write function within the knx plugin.
         """
 
-        if 'hue_dim_max' in item.conf:
+        if 'dpt3_dim_max' in item.conf:
             if not 'dpt3_dim_step' in item.conf:
                 item.conf['dpt3_dim_step'] = '25'
                 self.logger.warning('dimmenDPT3: no dpt3_dim_step defined in item [{0}] using default 25'.format(item))
