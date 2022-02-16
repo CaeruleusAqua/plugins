@@ -31,6 +31,10 @@ from lib.item import Items
 
 from .webif import WebInterface
 
+import numpy as np
+import scipy
+import threading
+
 
 # If a needed package is imported, which might be not installed in the Python environment,
 # add it to a requirements.txt file within the plugin's directory
@@ -96,6 +100,14 @@ class AdvancedLighting(SmartPlugin):
         self.scheduler_remove('poll_device')
         self.alive = False
 
+    def thread_function(self, item, time,color,brightness):
+        while True:
+            self.getHCL2(2200,6500,time,color,brightness)
+            if(item.return_children())
+
+
+
+
     def parse_item(self, item):
         """
         Default plugin parse_item method. Is called when the plugin is initialized.
@@ -110,12 +122,33 @@ class AdvancedLighting(SmartPlugin):
                         can be sent to the knx with a knx write function within the knx plugin.
         """
 
+        if 'avl_times' in  item.conf:
+            if not 'avl_brightness' in item.conf:
+                self.logger.error('AdvancedLighting: avl_brightness not defined in item [{0}]'.format(item))
+                return
+            if not 'avl_color' in item.conf:
+                self.logger.error('AdvancedLighting: avl_color not defined in item [{0}]'.format(item))
+                return
+
+
+            avl_times = str(item.conf['avl_times'])
+            avl_brightness = item.conf['avl_brightness']
+            avl_color = item.conf['avl_color']
+
+            time = np.array([int(x) for x in avl_times.split(',')])*60*60
+            brightness = np.array([int(x) for x in avl_brightness.split(',')])
+            color = np.array([int(x) for x in avl_color.split(',')])
+
+            x = threading.Thread(target=self.thread_function, args=(1,))
+            x.start()
+
+
         if 'dpt3_dim_max' in item.conf:
             if not 'dpt3_dim_step' in item.conf:
                 item.conf['dpt3_dim_step'] = '25'
                 self.logger.warning('dimmenDPT3: no dpt3_dim_step defined in item [{0}] using default 25'.format(item))
             if not 'dpt3_dim_time' in item.conf:
-                item.conf['hue_dim_time'] = '1'
+                item.conf['dpt3_dim_time'] = '1'
                 self.logger.warning('dimmenDPT3: no dpt3_dim_time defined in item [{0}] using default 1'.format(item))
             return self.dimDPT3
 
@@ -174,20 +207,21 @@ class AdvancedLighting(SmartPlugin):
         #     item(device_value, self.get_shortname(), source=device_source_id)
         pass
 
-    def getHCL2(min_color, max_color):
+    def getHCL2(min_color, max_color, time, color, brightness):
         hour = 60 * 60
         current_time = datetime.datetime.now()
-        time = np.array([0, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24]) * (60 * 60)
-        brightness = np.array([15, 15, 30, 100, 100, 100, 100, 80, 50, 30, 30, 15])
-        color = np.array([0, 0, 0, 45, 100, 100, 100, 50, 25, 0, 0, 0])
 
-        brightness_f = interpolate.interp1d(time, brightness)
+        # time = np.array([0, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24]) * (60 * 60)
+        # brightness = np.array([15, 15, 30, 100, 100, 100, 100, 80, 50, 30, 30, 15])
+        # color = np.array([0, 0, 0, 45, 100, 100, 100, 50, 25, 0, 0, 0])
+
+        brightness_f = scipy.interpolate.interp1d(time, brightness)
         # xnew = np.arange(0, 24 * hour, 0.1)
         # ynew = brightness_f(xnew)  # use interpolation function returned by `interp1d`
         # plt.plot(time / hour, brightness, 'o', xnew / hour, ynew, '-')
         # plt.show()
 
-        color_f = interpolate.interp1d(time, color)
+        color_f = scipy.interpolate.interp1d(time, color)
         # xnew = np.arange(0, 24 * hour, 0.1)
         # ynew = color_f(xnew)  # use interpolation function returned by `interp1d`
         # plt.plot(time / hour, color, 'o', xnew / hour, ynew, '-')
@@ -199,9 +233,6 @@ class AdvancedLighting(SmartPlugin):
         target_brightness = brightness_f(current_seconds) + 0
         target_color = (color_f(current_seconds) * color_range) + min_color
         return (target_brightness, target_color)
-
-    def timeDim(self, item: lib.item.item, caller=None, source=None, dest=None):
-        pass
 
 
     def dimDPT3(self, item: lib.item.item, caller=None, source=None, dest=None):
@@ -215,17 +246,19 @@ class AdvancedLighting(SmartPlugin):
         valueMax = float(item.conf['dpt3_dim_max'])
         valueDimStep = float(item.conf['dpt3_dim_step'])
         valueDimTime = float(item.conf['dpt3_dim_time'])
+
+        parent = item.return_parent()
+
         if item()[1] == 1:
             # dimmen
             if item()[0] == 1:
                 # hoch
-                item.return_parent().fade(valueMax, valueDimStep, valueDimTime)
+                parent.fade(valueMax, valueDimStep, valueDimTime)
             else:
                 # runter
-                item.return_parent().fade(0, valueDimStep, valueDimTime)
+                parent.fade(0, valueDimStep, valueDimTime)
         else:
             # stoppe den fader
-            parent = item.return_parent()
             parent._lock.acquire()
             parent._fading = False
             parent._lock.notify_all()
