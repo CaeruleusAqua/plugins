@@ -687,34 +687,33 @@ class KNX(SmartPlugin):
         :param source: if given it represents the source
         :param dest: if given it represents the dest
         """
-		if self.alive:
-		
-	        if self.has_iattr(item.conf, KNX_RATE):
-	            rate = float(self.get_iattr_value(item.conf, KNX_RATE))
-	            if hasattr(item, 'last_knx_update'):
-	                delta = self.shtime.now() - item.last_knx_update
-	                if delta.total_seconds() < rate:
-	                    return
-	                else:
-	                    item.last_knx_update = self.shtime.now()
-	            else:
-	                item.last_knx_update = self.shtime.now()
+        if self.alive:
 
+            if self.has_iattr(item.conf, KNX_RATE):
+                rate = float(self.get_iattr_value(item.conf, KNX_RATE))
+                if hasattr(item, 'last_knx_update'):
+                    delta = self.shtime.now() - item.last_knx_update
+                    if delta.total_seconds() < rate:
+                        return
+                    else:
+                        item.last_knx_update = self.shtime.now()
+                else:
+                    item.last_knx_update = self.shtime.now()
 
-	        if self.has_iattr(item.conf, KNX_SEND):
-	            if caller != self.get_shortname():
-	                for ga in self.get_iattr_value(item.conf, KNX_SEND):
-	                    _value = item()
-	                    if self._log_own_packets is True:
-	                        self._busmonitor(self._bm_format.format(self.get_instance_name(), 'SEND', ga, _value))
-	                    self.groupwrite(ga, _value, self.get_iattr_value(item.conf, KNX_DPT))
-	        if self.has_iattr(item.conf, KNX_STATUS):
-	            for ga in self.get_iattr_value(item.conf, KNX_STATUS):  # send status update
-	                if ga != dest:
-	                    _value = item()
-	                    if self._log_own_packets is True:
-	                        self._busmonitor(self._bm_format.format(self.get_instance_name(), 'STATUS', ga, _value))
-	                    self.groupwrite(ga, _value, self.get_iattr_value(item.conf, KNX_DPT))
+            if self.has_iattr(item.conf, KNX_SEND):
+                if caller != self.get_shortname():
+                    for ga in self.get_iattr_value(item.conf, KNX_SEND):
+                        _value = item()
+                        if self._log_own_packets is True:
+                            self._busmonitor(self._bm_format.format(self.get_instance_name(), 'SEND', ga, _value))
+                        self.groupwrite(ga, _value, self.get_iattr_value(item.conf, KNX_DPT))
+            if self.has_iattr(item.conf, KNX_STATUS):
+                for ga in self.get_iattr_value(item.conf, KNX_STATUS):  # send status update
+                    if ga != dest:
+                        _value = item()
+                        if self._log_own_packets is True:
+                            self._busmonitor(self._bm_format.format(self.get_instance_name(), 'STATUS', ga, _value))
+                        self.groupwrite(ga, _value, self.get_iattr_value(item.conf, KNX_DPT))
 
 
 # ------------------------------------------
