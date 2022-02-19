@@ -199,9 +199,9 @@ class Hue2(SmartPlugin):
             conf_data['id'] = self.get_iattr_value(item.conf, 'hue2_id')
             conf_data['resource'] = self.get_iattr_value(item.conf, 'hue2_resource')
             conf_data['function'] = self.get_iattr_value(item.conf, 'hue2_function')
-            self.has_iattr(item.conf, 'hue2_refence_light_id')
-            if conf_data['resource'] == "group":
-                conf_data['hue2_refence_light_id'] = self.get_iattr_value(item.conf, 'hue2_refence_light_id')
+            if self.has_iattr(item.conf, 'hue2_refence_light_id'):
+                if conf_data['resource'] == "group":
+                    conf_data['hue2_refence_light_id'] = self.get_iattr_value(item.conf, 'hue2_refence_light_id')
 
             conf_data['item'] = item
             self.plugin_items[item.path()] = conf_data
@@ -504,7 +504,7 @@ class Hue2(SmartPlugin):
             src = None
         for pi in self.plugin_items:
             plugin_item = self.plugin_items[pi]
-            if  plugin_item['resource'] == 'light':
+            if plugin_item['resource'] == 'light':
                 value = self._get_light_item_value(plugin_item['id'], plugin_item['function'], plugin_item['item'].id())
                 if value is not None:
                     plugin_item['item'](value, self.get_shortname(), src)
