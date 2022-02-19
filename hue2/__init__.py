@@ -216,6 +216,8 @@ class Hue2(SmartPlugin):
                 return self.update_item
             return
 
+        if 'dpt3_dim' in item.conf:
+            return self.dimDPT3
 
     def parse_logic(self, logic):
         """
@@ -224,6 +226,33 @@ class Hue2(SmartPlugin):
         if 'xxx' in logic.conf:
             # self.function(logic['name'])
             pass
+
+    def dimDPT3(self, item, caller=None, source=None, dest=None):
+        # auswertung der list werte für die KNX daten
+        # [1] steht für das dimmen
+        # [0] für die richtung
+        current_level = 0
+        parent = item.return_parent()
+        for child in parent.return_parent().return_children():
+            self.logger.warning("Child item name is: {}".format(str(child)))
+            short_name = str(child).split('.')[-1]
+            self.logger.warning("Short child item name is: {}".format(str(short_name)))
+            if short_name == "level":
+                current_level = child()
+                break
+
+        self.logger.warning("current level is: {}".format(current_level))
+
+        if item()[1] == 1:
+            # dimmen
+            if item()[0] == 1:
+                # hoch
+                parent(255-current_level, self.get_shortname())
+            else:
+                # runter
+                parent(current_level-1, self.get_shortname())
+        else:
+            parent(0, self.get_shortname())
 
     def update_item(self, item, caller=None, source=None, dest=None):
         """
@@ -239,7 +268,6 @@ class Hue2(SmartPlugin):
         :param dest: if given it represents the dest
         """
         if self.alive and caller != self.get_shortname():
-
             # code to execute if the plugin is not stopped
             # and only, if the item has not been changed by this this plugin:
             self.logger.info("update_item: {} has been changed by caller {} outside this plugin".format(item.id(), caller))
