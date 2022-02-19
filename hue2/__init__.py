@@ -232,33 +232,21 @@ class Hue2(SmartPlugin):
             pass
 
     def dimDPT3(self, item, caller=None, source=None, dest=None):
-        # auswertung der list werte für die KNX daten
-        # [1] steht für das dimmen
-        # [0] für die richtung
-        current_level = 0
+        # Evaluation of the list values for the KNX data
+        # [1] for dimming
+        # [0] for direction
         parent = item.return_parent()
-        for child in parent.return_parent().return_children():
-            short_name = str(child).split('.')[-1]
-            if short_name == "level":
-                current_level = child()
-                break
-
-        self.logger.warning("current level is: {}".format(current_level))
 
         if item()[1] == 1:
             # dimmen
             if item()[0] == 1:
                 # up
-                up = 255 - current_level
-                self.logger.warning("command is up: {}".format(up))
                 parent(254, self.get_shortname()+"dpt3")
             else:
                 # down
-                down = -(current_level - 1)
-                self.logger.warning("command is down: {}".format(down))
                 parent(-254, self.get_shortname()+"dpt3")
         else:
-            parent(int(0), self.get_shortname()+"dpt3")
+            parent(0, self.get_shortname()+"dpt3")
 
     def update_item(self, item, caller=None, source=None, dest=None):
         """
