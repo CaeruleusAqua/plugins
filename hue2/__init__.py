@@ -510,6 +510,7 @@ class Hue2(SmartPlugin):
                     plugin_item['item'](value, self.get_shortname(), src)
 
             if plugin_item['resource'] == 'group':
+                self.logger.warning(str(plugin_item))
                 if "hue2_refence_light_id" in plugin_item:
                     reference_light_id = plugin_item["hue2_refence_light_id"]
                     self.logger.warning("updating light with id: " + reference_light_id)
