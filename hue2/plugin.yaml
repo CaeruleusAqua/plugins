@@ -120,7 +120,7 @@ item_attributes:
           - sensor
 
     hue2_refence_light_id:
-        type: num
+        type: str
         description:
             de: "ID der des referenzwert gebenden Lichtes. Nur möglich wenn resource == group"
             en: "ID of the light giving the reference value. Only possible if resource == group"
