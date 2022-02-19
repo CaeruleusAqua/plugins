@@ -242,18 +242,19 @@ class Hue2(SmartPlugin):
                 break
 
         self.logger.warning("current level is: {}".format(current_level))
+        self.logger.warning("parent is {}".format(str(parent)))
 
         if item()[1] == 1:
             # dimmen
             if item()[0] == 1:
                 # up
-                up = 255-current_level
-                self.logger.warning("command is is: {}".format(up))
-                parent(255-current_level, self.get_shortname())
+                up = 255 - current_level
+                self.logger.warning("command is up: {}".format(up))
+                parent(255 - current_level, self.get_shortname())
             else:
                 # down
-                down = -(current_level-1)
-                self.logger.warning("command is is: {}".format(down))
+                down = -(current_level - 1)
+                self.logger.warning("command is down: {}".format(down))
                 parent(down, self.get_shortname())
         else:
             parent(0, self.get_shortname())
