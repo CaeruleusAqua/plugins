@@ -246,11 +246,15 @@ class Hue2(SmartPlugin):
         if item()[1] == 1:
             # dimmen
             if item()[0] == 1:
-                # hoch
+                # up
+                up = 255-current_level
+                self.logger.warning("command is is: {}".format(up))
                 parent(255-current_level, self.get_shortname())
             else:
-                # runter
-                parent(current_level-1, self.get_shortname())
+                # down
+                down = -(current_level-1)
+                self.logger.warning("command is is: {}".format(down))
+                parent(down, self.get_shortname())
         else:
             parent(0, self.get_shortname())
 
