@@ -238,15 +238,12 @@ class Hue2(SmartPlugin):
         current_level = 0
         parent = item.return_parent()
         for child in parent.return_parent().return_children():
-            self.logger.warning("Child item name is: {}".format(str(child)))
             short_name = str(child).split('.')[-1]
-            self.logger.warning("Short child item name is: {}".format(str(short_name)))
             if short_name == "level":
                 current_level = child()
                 break
 
         self.logger.warning("current level is: {}".format(current_level))
-        self.logger.warning("parent is {}".format(str(parent)))
 
         if item()[1] == 1:
             # dimmen
@@ -261,7 +258,7 @@ class Hue2(SmartPlugin):
                 self.logger.warning("command is down: {}".format(down))
                 parent(int(down), self.get_shortname()+"dpt3")
         else:
-            parent(0, self.get_shortname())
+            parent(int(0), self.get_shortname()+"dpt3")
 
     def update_item(self, item, caller=None, source=None, dest=None):
         """
