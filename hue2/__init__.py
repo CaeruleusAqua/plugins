@@ -251,12 +251,12 @@ class Hue2(SmartPlugin):
                 # up
                 up = 255 - current_level
                 self.logger.warning("command is up: {}".format(up))
-                parent(int(up), self.get_shortname()+"dpt3")
+                parent(254, self.get_shortname()+"dpt3")
             else:
                 # down
                 down = -(current_level - 1)
                 self.logger.warning("command is down: {}".format(down))
-                parent(int(down), self.get_shortname()+"dpt3")
+                parent(-254, self.get_shortname()+"dpt3")
         else:
             parent(int(0), self.get_shortname()+"dpt3")
 
