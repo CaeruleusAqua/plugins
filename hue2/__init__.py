@@ -307,7 +307,7 @@ class Hue2(SmartPlugin):
                 else:
                     self.br.lights[plugin_item['id']]['state'](bri=value, transitiontime=hue_transition_time)
             elif plugin_item['function'] == 'bri_inc':
-                self.br.lights[plugin_item['id']]['state'](bri_inc=value, transitiontime=hue_transition_time)
+                self.br.lights[plugin_item['id']]['state'](on=True, bri_inc=value, transitiontime=hue_transition_time)
             elif plugin_item['function'] == 'hue':
                 self.br.lights[plugin_item['id']]['state'](hue=value, transitiontime=hue_transition_time)
             elif plugin_item['function'] == 'sat':
