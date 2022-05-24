@@ -26,6 +26,7 @@
 from lib.model.smartplugin import *
 from lib.item import Items
 from datetime import datetime
+import threading
 
 from .webif import WebInterface
 
@@ -71,8 +72,10 @@ class modbus_tcp(SmartPlugin):
         self.connected = False
         
         self._Mclient = ModbusTcpClient(self._host, port=self._port)
+        self.lock = threading.Lock()
         
         self.init_webinterface(WebInterface)
+
         
         return
 
@@ -174,43 +177,47 @@ class modbus_tcp(SmartPlugin):
         changes on it's own, but has to be polled to get the actual status.
         It is called by the scheduler which is set within run() method.
         """
-        try:
-            if self._Mclient.connect():
-                self.logger.info("connected to {0}".format(str(self._Mclient)))
-                self.connected = True
-            else:
-                self.logger.error("could not connect to {0}:{1}".format(self._host, self._port))
+
+        with self.lock:
+            try:
+                if self._Mclient.connect():
+                    self.logger.info("connected to {0}".format(str(self._Mclient)))
+                    self.connected = True
+                else:
+                    self.logger.error("could not connect to {0}:{1}".format(self._host, self._port))
+                    self.connected = False
+                    return
+
+            except Exception as e:
+                self.logger.error("connection expection: {0} {1}".format(str(self._Mclient), e))
                 self.connected = False
                 return
-                
-        except Exception as e:
-            self.logger.error("connection expection: {0} {1}".format(str(self._Mclient), e))
-            self.connected = False
-            return
-            
+
+
         startTime = datetime.now()
         regCount = 0
         try:
             for reg, regPara in self._regToRead.items():
-                regAddr = regPara['regAddr']
-                value = self.__read_Registers(regPara)
-                #self.logger.debug("value readed: {0} type: {1}".format(value, type(value)))
-                if value is not None:
-                    item = regPara['item']
-                    if regPara['factor'] != 1:
-                        value = value * regPara['factor']
-                        #self.logger.debug("value {0} multiply by: {1}".format(value, regPara['factor']))
-                    item(value, self.get_fullname())
-                    regCount+=1
-                    
-                    if 'read_dt' in regPara:
-                        regPara['last_read_dt'] = regPara['read_dt']
-                    
-                    if 'value' in regPara:
-                        regPara['last_value'] = regPara['value']
-                    
-                    regPara['read_dt'] = datetime.now()
-                    regPara['value'] = value
+                with self.lock:
+                    regAddr = regPara['regAddr']
+                    value = self.__read_Registers(regPara)
+                    #self.logger.debug("value readed: {0} type: {1}".format(value, type(value)))
+                    if value is not None:
+                        item = regPara['item']
+                        if regPara['factor'] != 1:
+                            value = value * regPara['factor']
+                            #self.logger.debug("value {0} multiply by: {1}".format(value, regPara['factor']))
+                        item(value, self.get_fullname())
+                        regCount+=1
+
+                        if 'read_dt' in regPara:
+                            regPara['last_read_dt'] = regPara['read_dt']
+
+                        if 'value' in regPara:
+                            regPara['last_value'] = regPara['value']
+
+                        regPara['read_dt'] = datetime.now()
+                        regPara['value'] = value
             endTime = datetime.now()
             duration = endTime - startTime
             if regCount > 0:
@@ -219,9 +226,6 @@ class modbus_tcp(SmartPlugin):
             self.logger.debug("poll_device: {0} register readed requed-time: {1}".format(regCount, duration))
         except Exception as e:
             self.logger.error("something went wrong in the poll_device function: {0}".format(e))
-        finally:
-            self._Mclient.close()
-            #self.connected = False
         
      # called each time an item changes.
     def update_item(self, item, caller=None, source=None, dest=None):
@@ -273,30 +277,29 @@ class modbus_tcp(SmartPlugin):
             reg += '.'
             reg += str(slaveUnit)
             if reg in self._regToWrite:
-                regPara = self._regToWrite[reg]
-                self.logger.debug('update_item:{0} value:{1} regToWrite:{2}'.format(item, item(), reg))
-                try:
-                    if self._Mclient.connect():
-                        self.logger.info("connected to {0}".format(str(self._Mclient)))
-                        self.connected = True
-                    else:
-                        self.logger.error("could not connect to {0}:{1}".format(self._host, self._port))
+                with self.lock:
+                    regPara = self._regToWrite[reg]
+                    self.logger.debug('update_item:{0} value:{1} regToWrite:{2}'.format(item, item(), reg))
+                    try:
+                        if self._Mclient.connect():
+                            self.logger.info("connected to {0}".format(str(self._Mclient)))
+                            self.connected = True
+                        else:
+                            self.logger.error("could not connect to {0}:{1}".format(self._host, self._port))
+                            self.connected = False
+                            return
+
+                    except Exception as e:
+                        self.logger.error("connection expection: {0} {1}".format(str(self._Mclient), e))
                         self.connected = False
                         return
-                        
-                except Exception as e:
-                    self.logger.error("connection expection: {0} {1}".format(str(self._Mclient), e))
-                    self.connected = False
-                    return
-                    
-                startTime = datetime.now()
-                regCount = 0
-                try:
-                    self.__write_Registers(regPara, item())
-                except Exception as e:
-                    self.logger.error("something went wrong in the __write_Registers function: {0}".format(e))
-                finally:
-                    self._Mclient.close()
+
+                    startTime = datetime.now()
+                    regCount = 0
+                    try:
+                        self.__write_Registers(regPara, item())
+                    except Exception as e:
+                        self.logger.error("something went wrong in the __write_Registers function: {0}".format(e))
                 
     def __write_Registers(self, regPara, value):
         objectType = regPara['objectType']
