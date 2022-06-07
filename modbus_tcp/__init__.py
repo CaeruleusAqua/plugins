@@ -326,7 +326,7 @@ class modbus_tcp(SmartPlugin):
             value = value * (1/regPara['factor'])
         
         self.logger.debug("write {0} to {1}.{2}.{3} (address.slaveUnit) dataType:{4}".format(value, objectType, address, slaveUnit, dataTypeStr))
-        builder = BinaryPayloadBuilder(byteorder=bo,wordorder=wo)
+        builder = BinaryPayloadBuilder(byteorder=bo, wordorder=wo)
         
         if dataType.lower() == 'uint':
             if bits == 16:
@@ -336,7 +336,7 @@ class modbus_tcp(SmartPlugin):
             elif bits == 64:
                 builder.add_64bit_uint(int(value))
             else:
-                self.logger.error("Number of bits or datatype not supportet : {0}".format(typeStr))
+                self.logger.error("Number of bits or datatype not supported : {0}".format(typeStr))
         elif dataType.lower() == 'int':
             if bits == 16:
                 builder.add_16bit_int(int(value))
@@ -345,14 +345,14 @@ class modbus_tcp(SmartPlugin):
             elif bits == 64:
                 builder.add_64bit_int(int(value))
             else:
-                self.logger.error("Number of bits or datatype not supportet : {0}".format(typeStr))
+                self.logger.error("Number of bits or datatype not supported : {0}".format(typeStr))
         elif dataType.lower() == 'float':
             if bits == 32:
                  builder.add_32bit_float(value)
             if bits == 64:
                  builder.add_64bit_float(value)
             else:
-                self.logger.error("Number of bits or datatype not supportet : {0}".format(typeStr))
+                self.logger.error("Number of bits or datatype not supported : {0}".format(typeStr))
         elif dataType.lower() == 'string':
             builder.add_string(value)
         elif dataType.lower() == 'bit':
@@ -366,7 +366,7 @@ class modbus_tcp(SmartPlugin):
                 else:
                     self.logger.error("Value is not a bitstring: {0}".format(value))
         else:
-            self.logger.error("Number of bits or datatype not supportet : {0}".format(typeStr))
+            self.logger.error("Number of bits or datatype not supported : {0}".format(typeStr))
             return None
         
         if objectType == 'Coil':
@@ -463,7 +463,7 @@ class modbus_tcp(SmartPlugin):
             elif bits == 64:
                 return decoder.decode_64bit_uint()
             else:
-                self.logger.error("Number of bits or datatype not supportet : {0}".format(typeStr))
+                self.logger.error("Number of bits or datatype not supported : {0}".format(typeStr))
         elif dataType.lower() == 'int':
             if bits == 16:
                 return decoder.decode_16bit_int()
@@ -472,14 +472,14 @@ class modbus_tcp(SmartPlugin):
             elif bits == 64:
                 return decoder.decode_64bit_int()
             else:
-                self.logger.error("Number of bits or datatype not supportet : {0}".format(typeStr))
+                self.logger.error("Number of bits or datatype not supported : {0}".format(typeStr))
         elif dataType.lower() == 'float':
             if bits == 32:
                 return decoder.decode_32bit_float()
             if bits == 64:
                 return decoder.decode_64bit_float()
             else:
-                self.logger.error("Number of bits or datatype not supportet : {0}".format(typeStr))
+                self.logger.error("Number of bits or datatype not supported : {0}".format(typeStr))
         elif dataType.lower() == 'string':
             # bei string: bits = bytes !! string16 -> 16Byte
             ret = decoder.decode_string(bits)
@@ -492,5 +492,5 @@ class modbus_tcp(SmartPlugin):
                 self.logger.debug("readed bits values: {0}".format(value.decode_bits()))
                 return decoder.decode_bits()
         else:
-            self.logger.error("Number of bits or datatype not supportet : {0}".format(typeStr))
+            self.logger.error("Number of bits or datatype not supported : {0}".format(typeStr))
         return None
