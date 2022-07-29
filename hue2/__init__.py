@@ -287,8 +287,10 @@ class Hue2(SmartPlugin):
         if 'hue2_transitionTime' in item.conf:
             hue_transition_time = int(float(item.conf['hue2_transitionTime']) * 10)
         try:
-            if plugin_item['function'] == 'on':
-                self.br.lights(plugin_item['id'], 'state', on=value, transitiontime=hue_transition_time)
+            if plugin_item['function'] == 'dict':
+                self.br.lights[plugin_item['id']]['state'](**value)
+            elif plugin_item['function'] == 'on':
+                self.br.lights[plugin_item['id']]['state'](on=value, transitiontime=hue_transition_time)
             elif plugin_item['function'] == 'bri':
                 if value > 0:
                     self.br.lights[plugin_item['id']]['state'](on=True, bri=value, transitiontime=hue_transition_time)
@@ -331,8 +333,10 @@ class Hue2(SmartPlugin):
         if 'hue2_transitionTime' in item.conf:
             hue_transition_time = int(float(item.conf['hue2_transitionTime']) * 10)
         try:
-            if plugin_item['function'] == 'on':
-                self.br.groups(plugin_item['id'], 'action', on=value, transitiontime=hue_transition_time)
+            if plugin_item['function'] == 'dict':
+                self.br.groups[plugin_item['id']]['action'](**value)
+            elif plugin_item['function'] == 'on':
+                self.br.groups[plugin_item['id']]['action'](on=value, transitiontime=hue_transition_time)
             elif plugin_item['function'] == 'bri':
                 if value > 0:
                     self.br.groups[plugin_item['id']]['action'](on=True, bri=value, transitiontime=hue_transition_time)

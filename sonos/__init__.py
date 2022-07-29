@@ -93,10 +93,10 @@ class WebserviceHttpHandler(BaseHTTPRequestHandler):
             for mime_type, key in mapping.items():
                 if extension == key:
                     return mime_type
-            raise Exception("Could not found mime-type for extension '{ext}'.".format(ext=extension))
+            raise Exception(f"Cannot determine mime-type for extension '{extension}'.")
 
         except Exception as err:
-            self.logger.warning(err)
+            self.logger.warning(f"Exception in _get_mime_type_by_filetype: {err}")
             return None
 
     def do_GET(self):
@@ -121,7 +121,7 @@ class WebserviceHttpHandler(BaseHTTPRequestHandler):
             mime_type = self._get_mime_type_by_filetype(file_path)
 
             if mime_type is None:
-                self.send_error(406, 'File With Unsupported Media-Type : %s' % self.path)
+                self.send_error(406, 'File with unsupported media type : %s' % self.path)
                 return
 
             client = "{ip}:{port}".format(ip=self.client_address[0], port=self.client_address[1])
@@ -133,9 +133,11 @@ class WebserviceHttpHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Length', sys.getsizeof(file))
             self.end_headers()
             self.wfile.write(file)
+        except ConnectionResetError:
+            self.logger.debug("Connection reset by partner")
         except Exception as ex:
-            self.logger.error("Error delivering file {file}".format(file=file_path))
-            self.logger.error(ex)
+            self.logger.error(f"Error delivering file {file_path}")
+            self.logger.error(f"Exception: {ex}")
         finally:
             self.connection.close()
 
@@ -279,6 +281,8 @@ class Speaker(object):
         self._night_mode = False
         self.dialog_mode_items = []
         self._dialog_mode = False
+        self.buttons_enabled_items = []
+        self._buttons_enabled = False
         self.cross_fade_items = []
         self._cross_fade = False
         self.snooze_items = []
@@ -433,6 +437,7 @@ class Speaker(object):
             if self.snooze > 0:
                 self.snooze = self.get_snooze()
         self.status_light = self.get_status_light()
+        self.buttons_enabled = self.get_buttons_enabled()
         self.sonos_playlists()
 
     def check_subscriptions(self) -> None:
@@ -485,6 +490,7 @@ class Speaker(object):
                         self.night_mode = event.variables['night_mode']
                     if 'dialog_mode' in event.variables:
                         self.dialog_mode = event.variables['dialog_mode']
+                    self.logger.debug(f"Debug Sonos: {self.uid}: event variables: {event.variables}")
                     sub_handler.event.events.task_done()
                     del event
                 except Empty:
@@ -502,6 +508,7 @@ class Speaker(object):
             while not sub_handler.signal.wait(1):
                 try:
                     event = sub_handler.event.events.get(timeout=0.5)
+                    #self.logger.debug(f"Debug Sonos alarms: {self.uid}: event variables: {event.variables}")
                     sub_handler.event.events.task_done()
                     del event
                 except Empty:
@@ -519,6 +526,7 @@ class Speaker(object):
             while not sub_handler.signal.wait(1):
                 try:
                     event = sub_handler.event.events.get(timeout=0.5)
+                    #self.logger.debug(f"Debug Sonos props: {self.uid}: event variables: {event.variables}")
                     sub_handler.event.events.task_done()
                     del event
                 except Empty:
@@ -583,6 +591,7 @@ class Speaker(object):
 
                                 # get some other properties
                                 self.status_light = self.get_status_light()
+                                self.buttons_enabledt = self.get_buttons_enabled()
                                 self.sonos_playlists()
 
                     sub_handler.event.events.task_done()
@@ -735,10 +744,10 @@ class Speaker(object):
 
     def _check_property(self):
         if not self.is_initialized:
-            self.logger.warning("Sonos: {uid}: speaker is not initialized.".format(uid=self.uid))
+            self.logger.warning(f"Speaker {self.uid} is not initialized.")
             return False
         if not self.coordinator:
-            self.logger.warning("Sonos: {uid}: coordinator is empty".format(uid=self.uid))
+            self.logger.warning(f"Speaker {self.uid}: coordinator is empty".format(uid=self.uid))
             return False
         if self.coordinator not in sonos_speaker:
             self.logger.warning("Sonos: {uid}: coordinator '{coordinator}' is not a valid speaker.".format
@@ -884,6 +893,56 @@ class Speaker(object):
             return True
         except Exception as ex:
             self.logger.warning("Sonos: {uid}: can't set night mode. Not supported.".format(uid=self.uid))
+            return False
+
+    @property
+    def buttons_enabled(self) -> bool:
+        """
+        Returns the current buttons enabled setting of the speaker.
+        :return: True or False
+        """
+        return self._buttons_enabled
+
+    @buttons_enabled.setter
+    def buttons_enabled(self, buttons_enabled: bool) -> None:
+        """
+        Setter for buttons_enabled (internal)
+        :param buttons_enabled: True or False
+        :rtype: None
+        :return: None
+        """
+        if self._buttons_enabled == buttons_enabled:
+            return
+        self._buttons_enabled = buttons_enabled
+        for item in self.buttons_enabled_items:
+            item(self.buttons_enabled, 'Sonos')
+
+    def set_buttons_enabled(self, buttons_enabled: bool) -> bool:
+        """
+        Calls the SoCo functionality buttons_enabled to set this setting to the speaker. This mode is not available for
+        non visible speakers (e.g. stereo slaves).
+        :rtype: bool
+        :param buttons_enabled: True or False
+        :return: 'True' if success, 'False' otherwise
+        """
+        try:
+            self.soco.buttons_enabled = buttons_enabled
+            self.buttons_enabled = buttons_enabled
+            return True
+        except Exception as ex:
+            self.logger.warning("Sonos: {uid}: can't set buttons enabled state. Not supported.".format(uid=self.uid))
+            return False
+
+    def get_buttons_enabled(self) -> bool:
+        """
+        Calls the SoCo function to get the buttons enabled status of the speaker.
+        :rtype: bool
+        :return: 'True' for buttons enabled, 'False' for buttons disabled
+        """
+        try:
+            return self.soco.buttons_enabled
+        except Exception as ex:
+            self.logger.error(ex)
             return False
 
     @property
@@ -1115,13 +1174,14 @@ class Speaker(object):
                 # raise Exception('Sonos: Volume has to be an integer between 0 and 100.')
 
             if self._check_max_volume_exceeded(volume, max_volume):
-                self.logger.debug("Sonos: Volume to set [{volume}] exceeds max volume [{max_volume}].".format(
+                self.logger.debug("Volume to set [{volume}] exceeds max volume [{max_volume}].".format(
                     volume=volume, max_volume=max_volume
                 ))
                 volume = max_volume
 
             if group_command:
                 for member in self.zone_group_members:
+                    self.logger.debug(f"Debug set_voloume: Setting {member} to volume {volume}")
                     sonos_speaker[member].soco.volume = volume
                     sonos_speaker[member].volume = volume
             else:
@@ -1399,8 +1459,15 @@ class Speaker(object):
         """
         if not self._check_property():
             return False
-        if not sonos_speaker[self.coordinator].soco.pause():
+        try:
+           ret = sonos_speaker[self.coordinator].soco.pause()
+        except Exception as e:
+            self.logger.warning(f"Exception during set_pause: {e}")
             return False
+        else:
+            if not ret:
+                return False
+
         sonos_speaker[self.coordinator].pause = True
         sonos_speaker[self.coordinator].play = False
         sonos_speaker[self.coordinator].stop = False
@@ -2113,9 +2180,10 @@ class Speaker(object):
                     # into e.g: MediaMetadataTrack
                     class_key = result_type_proper + raw_item['itemType'].title()
                     cls = get_class(class_key)
-                    from plugins.sonos.soco.music_services import Account
+                    #from plugins.sonos.soco.music_services.token_store import JsonFileTokenStore
                     items.append(
-                        cls.from_music_service(MusicService(service_name='TuneIn', account=Account()), raw_item))
+                        cls.from_music_service(MusicService(service_name='TuneIn'), raw_item))
+                        #cls.from_music_service(MusicService(service_name='TuneIn', token_store=JsonFileTokenStore()), raw_item))
 
             if not items:
                 exit(0)
@@ -2197,6 +2265,7 @@ class Speaker(object):
             item(p_l, 'Sonos')
 
     def _play_snippet(self, file_path: str, webservice_url: str, volume: int = -1, duration_offset: float = 0, fade_in=False) -> None:
+        self.logger.debug(f"Debug _play_snippet with volume {volume}")
         if not self._check_property():
             return
         if not os.path.isfile(file_path):
@@ -2239,9 +2308,10 @@ class Speaker(object):
                     if 'Stop' in currentActions:
                         self.set_stop()
                     if volume == -1:
+                        self.logger.debug(f"Debug _play_snippet, volume is -1, reset to {self.volume}")
                         volume = self.volume
 
-                    self.set_volume(volume, True)
+                    self.set_volume(volume, group_command=True)
                     self.soco.play_uri(snippet_url, title="snippet")
                     time.sleep(duration)
                     if 'Stop' in currentActions:
@@ -2355,9 +2425,15 @@ class Speaker(object):
 
 class Sonos(SmartPlugin):
     ALLOW_MULTIINSTANCE = False
-    PLUGIN_VERSION = "1.6.2"
+    PLUGIN_VERSION = "1.6.4"
 
     def __init__(self, sh, *args, **kwargs):
+        """
+        Initalizes the plugin.
+
+        """
+
+        # Call init code of parent class (SmartPlugin)
         super().__init__(**kwargs)
 
         self._sh = sh
@@ -2368,6 +2444,7 @@ class Sonos(SmartPlugin):
         self._local_webservice_path = self.get_parameter_value("local_webservice_path")
         self._snippet_duration_offset = float(self.get_parameter_value("snippet_duration_offset"))
         self.SoCo_nr_speakers = 0
+        self.zones = {}
 	
         from bin.smarthome import VERSION
         if '.'.join(VERSION.split('.', 2)[:2]) <= '1.5':
@@ -2694,6 +2771,8 @@ class Sonos(SmartPlugin):
                     sonos_speaker[uid].set_loudness(item(), group_command)
                 if command == "night_mode":
                     sonos_speaker[uid].set_night_mode(item())
+                if command == "buttons_enabled":
+                    sonos_speaker[uid].set_buttons_enabled(item())
                 if command == "dialog_mode":
                     sonos_speaker[uid].set_dialog_mode(item())
                 if command == "cross_fade":
@@ -2738,8 +2817,10 @@ class Sonos(SmartPlugin):
                                                 volume, self._snippet_duration_offset, fade_in)
                 if command == 'play_snippet':
                     if item() == "":
+                        self.logger.error("No item value when executing play_snippet command")
                         return
                     volume = self._resolve_child_command_int(item, 'snippet_volume', -1)
+                    self.logger.debug(f"Debug: play_snippet on uid {uid} with volume {volume}")
                     fade_in = self._resolve_child_command_bool(item, 'snippet_fade_in')
                     sonos_speaker[uid].play_snippet(item(), self._local_webservice_path_snippet, self._webservice_url, volume, self._snippet_duration_offset,
                                                     fade_in)
@@ -2874,6 +2955,8 @@ class Sonos(SmartPlugin):
                 self.logger.error("Exception during soco discover function: %s" % str(e))
                 return
 
+        self.zones = zones
+
         if zones is None: 
             self.logger.debug("Discovery could not be executed.")
             return 
@@ -2889,23 +2972,32 @@ class Sonos(SmartPlugin):
         self.zero_zone = False
 
         for zone in zones:
-            if zone.uid is None:
-                is_up = False
-            else:
-                uid = zone.uid.lower()
+            # Trying to extract Speaker ID (UID). Skip speaker otherwise:
 
-                self.logger.debug("Pinging speaker with uid {0}".format(uid))
-                # don't trust the discover function, offline speakers can be cached
-                # we try to ping the speaker
-                with open(os.devnull, 'w') as DEVNULL:
-                    try:
-                        subprocess.check_call(['ping', '-i', '0.2', '-c', '2', zone.ip_address],
-                                              stdout=DEVNULL, stderr=DEVNULL, timeout=1)
-                        is_up = True
-                    except subprocess.CalledProcessError:
-                        is_up = False
-                    except subprocess.TimeoutExpired:
-                        is_up = False
+            try:
+                uid = zone.uid
+            except Exception as e:
+                self.logger.warning(f"Exception in zone.uid for speaker {zone.ip_address}: {e}")
+                continue
+
+            if uid is None:
+                self.logger.warning(f"Zone has no valid uid. Cannot handle speaker {zone.ip_address}")
+                continue
+
+            uid = uid.lower()
+            self.logger.debug(f"Pinging speaker {uid} with ip {zone.ip_address}")
+            # don't trust the discover function, offline speakers can be cached
+            # we try to ping the speaker
+            try:
+                proc_result = subprocess.run(['ping', '-i', '0.2', '-c', '2', zone.ip_address],
+                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1)
+                is_up = True
+            except subprocess.CalledProcessError:
+                self.logger.warning(f"Debug: Ping {zone.ip_address} process finished with return code {proc_result.returncode}")
+                is_up = False
+            except subprocess.TimeoutExpired:
+                self.logger.debug(f"Ping {zone.ip_address} process timed out")
+                is_up = False            
 
             if is_up:
                 self.logger.info("Debug: Speaker found: {zone}, {uid}".format(zone=zone.ip_address, uid=uid))
@@ -2923,7 +3015,7 @@ class Sonos(SmartPlugin):
 #                        sonos_speaker[uid].check_subscriptions()
 
                 else:
-                    self.logger.info("Debug: Initializing new speaker with uid={0}".format(uid))
+                    self.logger.warning(f"Debug: Initializing new speaker with uid={uid} and ip={zone.ip_address}")
                     _initialize_speaker(uid, self.logger)
                     sonos_speaker[uid].soco = zone
 
@@ -3052,9 +3144,34 @@ class WebInterface(SmartPluginWebIf):
 
         :return: contents of the template after beeing rendered
         """
+
+        speakerlist = []
+
+        for zone in self.plugin.zones:
+            #self.logger.debug(f"vars(zone): {vars(zone)}")
+            speaker = dict()
+            try:
+                speaker['name'] = zone.player_name
+            except:
+                speaker['name'] = 'unknown'
+
+            try:
+                speaker['ip'] = zone.ip_address
+            except:
+                speaker['ip'] = 'unknown'
+
+            try:
+                 speaker['uid'] = zone.uid
+            except:
+                speaker['uid'] = 'unknown'
+
+            speakerlist.append(speaker)
+
+        speakerlist_sorted = sorted(speakerlist, key=lambda k: k['name'])
+
         tmpl = self.tplenv.get_template('index.html')
         # add values to be passed to the Jinja2 template eg: tmpl.render(p=self.plugin, interface=interface, ...)
-        return tmpl.render(p=self.plugin, items=sorted(self.items.return_items(), key=lambda k: str.lower(k['_path'])))
+        return tmpl.render(p=self.plugin, items=sorted(self.items.return_items(), key=lambda k: str.lower(k['_path'])), speakerlist=speakerlist_sorted)
 
 
     @cherrypy.expose

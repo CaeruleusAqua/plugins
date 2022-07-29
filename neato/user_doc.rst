@@ -1,9 +1,16 @@
 .. index:: Plugins; Neato (Neato und Vorwerk Unterstützung)
 .. index:: Neato
 
-=============
-neato/vorwerk
-=============
+=====
+neato
+=====
+
+.. image:: webif/static/img/plugin_logo.png
+   :alt: plugin logo
+   :width: 300px
+   :height: 300px
+   :scale: 50 %
+   :align: left
 
 Neato plugin, mit Unterstützung für Neato und Vorwerk Saugroboter.
 
@@ -65,6 +72,9 @@ Im ersten Tab Vorwerk OAuth2 findet sich direkt die Schritt fuer Schritt Anleitu
 
 Changelog
 ---------
+V1.6.8     added decoding of command availability status, e.g. "start" command available
+           If start command with persisten map is rejected due to "not_on_charge_base" error, retry start with non-persistent map.
+
 V1.6.6     added option to clear errors/alarms in neato/vorwerk backend via plugin's webif
 
 V1.6.5     added new function start_robot(boundary_id=None, map_id=None) to enable single room cleaning
