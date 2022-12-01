@@ -49,6 +49,13 @@ parameters:
             de: 'Port für die Kommunikation'
             en: 'Port for communication'
 
+    use_polling:
+        type: bool
+        default: false
+        description:
+            de: 'Soll polling statt async IO genutzt werden?'
+            en: 'Should polling be used instead of async IO?'
+
     cycle:
         type: int
         default: 60

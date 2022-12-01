@@ -29,6 +29,9 @@ import threading
 import struct
 import socket
 import errno
+import asyncio
+import serial_asyncio
+
 
 from lib.module import Modules
 from lib.item import Items
@@ -73,13 +76,65 @@ def swap16(x):
     return (((x << 8) & 0xFF00) |
             ((x >> 8) & 0x00FF))
 
-
 def swap32(x):
     return (((x << 24) & 0xFF000000) |
             ((x <<  8) & 0x00FF0000) |
             ((x >>  8) & 0x0000FF00) |
             ((x >> 24) & 0x000000FF))
 
+def start_background_loop(loop: asyncio.AbstractEventLoop) -> None:
+    asyncio.set_event_loop(loop)
+    loop.run_forever()
+
+
+
+class NotEnoughDataException(Exception):
+    def __int__(self):
+        pass
+
+
+class Reader(asyncio.Protocol):
+
+    def __init__(self):
+        self.buf = None
+        self.smlx = None
+        self.transport = None
+
+    def __call__(self):
+        return self
+
+    def connection_made(self, transport):
+        """Store the serial transport and prepare to receive data.
+        """
+        self.transport = transport
+        self.buf = bytes()
+        self.smlx.logger.debug("Reader connection created")
+
+    def data_received(self, chunk):
+        """Store characters until a newline is received.
+        """
+        self.smlx.logger.debug(f"Smartmeter is sending {len(chunk)} bytes of data")
+
+        self.buf += chunk
+
+        if len(self.buf) < 100:
+            return
+        try:
+            frames, self.buf = self.smlx.split_data(self.buf[:])
+            for frame in frames:
+                self.smlx.prepare_and_apply_data(frame)
+        except NotEnoughDataException as e:
+            self.smlx.logger.debug("Waiting for more data")
+        except Exception as e:
+            self.smlx.logger.error(f'Reading data from {self.smlx._target} failed with exception {e}')
+        # just in case of many errors, reset buffer
+        if len(self.buf) > 100000:
+            self.smlx.logger.error("Buffer got to large, doing buffer reset")
+            self.buf = bytes()
+
+
+    def connection_lost(self, exc):
+        self.smlx.logger.error("Connection so serial device was closed")
 
 # start_sequence = bytearray.fromhex('1B 1B 1B 1B 01 01 01 01')
 # end_sequence = bytearray.fromhex('1B 1B 1B 1B 1A')
@@ -124,6 +179,7 @@ class Smlx(SmartPlugin):
         self.timeout = self.get_parameter_value('timeout')    # 5
         self.buffersize = self.get_parameter_value('buffersize')    # 1024
         self.date_offset = self.get_parameter_value('date_offset')    # 0
+        self.use_polling = self.get_parameter_value('use_polling')    # false
 
         # Get base values for CRC calculation
         self.poly = self.get_parameter_value('poly')                        # 0x1021
@@ -144,6 +200,9 @@ class Smlx(SmartPlugin):
         self._item_dict = {}
         self._lock = threading.Lock()
         self.logger = logging.getLogger(__name__)
+        self.reader = False
+        self.loop = None
+        self.loop_thread = None
 
         if device in self._devices:
             device = self._devices[device]
@@ -164,7 +223,19 @@ class Smlx(SmartPlugin):
         """
         self.logger.debug(f"Plugin '{self.get_fullname()}': run method called")
         # Setup scheduler for device poll loop
-        self.scheduler_add(SML_SCHEDULER_NAME, self.poll_device, cycle=self.cycle)
+        if self.use_polling:
+            self.scheduler_add(SML_SCHEDULER_NAME, self.poll_device, cycle=self.cycle)
+        else:
+            self.loop = asyncio.new_event_loop()
+            self.loop_thread = threading.Thread(target=start_background_loop, args=(self.loop,), daemon=True)
+            self.loop_thread.start()
+
+            self.reader = Reader()
+            self.reader.smlx = self
+            reader = serial_asyncio.create_serial_connection(self.loop, self.reader, self.serialport, baudrate=9600, bytesize=serial.EIGHTBITS,
+                                                                  parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, timeout=self.timeout)
+
+            self.task = asyncio.run_coroutine_threadsafe(reader, self.loop)
 
         self.alive = True
 
@@ -173,9 +244,14 @@ class Smlx(SmartPlugin):
         Stop method for the plugin
         """
         self.logger.debug(f"Plugin '{self.get_fullname()}': stop method called")
-        self.scheduler_remove(SML_SCHEDULER_NAME)
-        self.alive = False
-        self.disconnect()
+        if self.use_polling:
+            self.scheduler_remove(SML_SCHEDULER_NAME)
+            self.alive = False
+            self.disconnect()
+        else:
+            self.loop.stop()
+            self.loop_thread.join()
+            self.alive = False
 
     def parse_item(self, item):
         """
@@ -274,7 +350,7 @@ class Smlx(SmartPlugin):
                 try:
                     data = self._sock.recv(length)
                     if data:
-                        total.append(data)
+                        total += data
                 except socket.error as e:
                     if e.args[0] == errno.EAGAIN or e.args[0] == errno.EWOULDBLOCK:
                         break
@@ -298,8 +374,8 @@ class Smlx(SmartPlugin):
         self._cyclic_update_active = True
 
         self.logger.debug('Polling Smartmeter now')
-        start_sequence = bytearray.fromhex('1B 1B 1B 1B 01 01 01 01')
-        end_sequence = bytearray.fromhex('1B 1B 1B 1B 1A')
+        # start_sequence = bytearray.fromhex('1B 1B 1B 1B 01 01 01 01')
+        # end_sequence = bytearray.fromhex('1B 1B 1B 1B 1A')
 
         self.connect()
 
@@ -310,81 +386,144 @@ class Smlx(SmartPlugin):
             self.logger.debug('Connected, try to query')
 
         start = time.time()
-        data_is_valid = False
+
         try:
             data = self._read(self.buffersize)
             if len(data) == 0:
                 self.logger.error('Reading data from device returned 0 bytes!')
                 return
-            else:
-                self.logger.debug(f'Read {len(data)} bytes')
 
-            if start_sequence in data:
-                prev, _, data = data.partition(start_sequence)
-                self.logger.debug('Start sequence marker {} found'.format(''.join(' {:02x}'.format(x) for x in start_sequence)))
-                if end_sequence in data:
-                    data, _, rest = data.partition(end_sequence)
-                    self.logger.debug('End sequence marker {} found'.format(''.join(' {:02x}'.format(x) for x in end_sequence)))
-                    self.logger.debug(f'Packet size is {len(data)}')
-                    if len(rest) > 3:
-                        filler = rest[0]
-                        self.logger.debug(f'{filler} fill byte(s) ')
-                        checksum = int.from_bytes(rest[1:3], byteorder='little')
-                        self.logger.debug(f'Checksum is {to_Hex(checksum)}')
-                        buffer = bytearray()
-                        buffer += start_sequence + data + end_sequence + rest[0:1]
-                        self.logger.debug(f'Buffer length is {len(buffer)}')
-                        self.logger.debug('Buffer: {}'.format(''.join(' {:02x}'.format(x) for x in buffer)))
-                        crc16 = algorithms.Crc(width=16, poly=self.poly,
-                            reflect_in=self.reflect_in, xor_in=self.xor_in,
-                            reflect_out=self.reflect_out, xor_out=self.xor_out)
-                        crc_calculated = crc16.table_driven(buffer)
-                        if not self.swap_crc_bytes:
-                            self.logger.debug(f'Calculated checksum is {to_Hex(crc_calculated)}, given CRC is {to_Hex(checksum)}')
-                            data_is_valid = crc_calculated == checksum
-                        else:
-                            self.logger.debug(f'Calculated and swapped checksum is {to_Hex(swap16(crc_calculated))}, given CRC is {to_Hex(checksum)}')
-                            data_is_valid = swap16(crc_calculated) == checksum
-                    else:
-                        self.logger.debug('Not enough bytes read at end to satisfy checksum calculation')
-                        return
-                else:
-                    self.logger.debug('No End sequence marker found in data')
-            else:
-                self.logger.debug('No Start sequence marker found in data')
+            self.logger.debug(f'Read {len(data)} bytes')
+            if self.check_data(data):
+                self.prepare_and_apply_data(data)
+
         except Exception as e:
             self.logger.error(f'Reading data from {self._target} failed with exception {e}')
             return
 
-        if data_is_valid:
-            self.logger.debug("Checksum was ok, now parse the data_package")
-            try:
-                values = self._parse(self._prepare(data))
-            except Exception as e:
-                self.logger.error(f'Preparing and parsing data failed with exception {e}')
-            else:
-                for obis in values:
-                    self.logger.debug(f'Entry {values[obis]}')
+        finally:
+            cycletime = time.time() - start
+            self.disconnect()
+            self.logger.debug(f"Polling Smartmeter done. Poll cycle took {cycletime} seconds.")
+            # release lock
+            self._cyclic_update_active = False
 
-                    if obis in self._items:
-                        for prop in self._items[obis]:
-                            for item in self._items[obis][prop]:
-                                try:
-                                    value = values[obis][prop]
-                                except Exception:
-                                    pass
-                                else:
-                                    item(value, self.get_shortname())
+    def split_data(self, data):
+        start_sequence = bytearray.fromhex('1B 1B 1B 1B 01 01 01 01')
+        end_sequence = bytearray.fromhex('1B 1B 1B 1B 1A')
+        frames = []
+        rest = data[:]
+
+        if start_sequence in data:
+            prev, _, data = data.partition(start_sequence)
+            self.logger.debug(
+                'Start sequence marker {} found'.format(''.join(' {:02x}'.format(x) for x in start_sequence)))
+            if end_sequence in data:
+                data, _, rest = data.partition(end_sequence)
+                self.logger.debug(
+                    'End sequence marker {} found'.format(''.join(' {:02x}'.format(x) for x in end_sequence)))
+                self.logger.debug(f'Packet size is {len(data)}')
+                if len(rest) > 3:
+                    missing_data = False
+                    filler = rest[0]
+                    self.logger.debug(f'{filler} fill byte(s) ')
+                    checksum = int.from_bytes(rest[1:3], byteorder='little')
+                    self.logger.debug(f'Checksum is {to_Hex(checksum)}')
+                    buffer = bytearray()
+                    buffer += start_sequence + data + end_sequence + rest[0:1]
+                    self.logger.debug(f'Buffer length is {len(buffer)}')
+                    self.logger.debug('Buffer: {}'.format(''.join(' {:02x}'.format(x) for x in buffer)))
+                    crc16 = algorithms.Crc(width=16, poly=self.poly,
+                                           reflect_in=self.reflect_in, xor_in=self.xor_in,
+                                           reflect_out=self.reflect_out, xor_out=self.xor_out)
+                    crc_calculated = crc16.table_driven(buffer)
+                    if not self.swap_crc_bytes:
+                        self.logger.debug(f'Calculated checksum is {to_Hex(crc_calculated)}, given CRC is {to_Hex(checksum)}')
+                        if crc_calculated == checksum:
+                            frames.append(data)
+                    else:
+                        self.logger.debug(f'Calculated and swapped checksum is {to_Hex(swap16(crc_calculated))}, given CRC is {to_Hex(checksum)}')
+                        if swap16(crc_calculated) == checksum:
+                            frames.append(data)
+
+                else:
+                    bak = start_sequence + data + end_sequence + rest
+                    rest = bak
+
+        return frames, rest
+
+    def check_data(self, data):
+        start_sequence = bytearray.fromhex('1B 1B 1B 1B 01 01 01 01')
+        end_sequence = bytearray.fromhex('1B 1B 1B 1B 1A')
+        backup = data
+        data_is_valid = False
+        missing_data = True
+        if start_sequence in data:
+            prev, _, data = data.partition(start_sequence)
+            self.logger.debug(
+                'Start sequence marker {} found'.format(''.join(' {:02x}'.format(x) for x in start_sequence)))
+            if end_sequence in data:
+                data, _, rest = data.partition(end_sequence)
+                self.logger.debug(
+                    'End sequence marker {} found'.format(''.join(' {:02x}'.format(x) for x in end_sequence)))
+                self.logger.debug(f'Packet size is {len(data)}')
+                if len(rest) > 3:
+                    missing_data = False
+                    filler = rest[0]
+                    self.logger.debug(f'{filler} fill byte(s) ')
+                    checksum = int.from_bytes(rest[1:3], byteorder='little')
+                    self.logger.debug(f'Checksum is {to_Hex(checksum)}')
+                    buffer = bytearray()
+                    buffer += start_sequence + data + end_sequence + rest[0:1]
+                    self.logger.debug(f'Buffer length is {len(buffer)}')
+                    self.logger.debug('Buffer: {}'.format(''.join(' {:02x}'.format(x) for x in buffer)))
+                    crc16 = algorithms.Crc(width=16, poly=self.poly,
+                                           reflect_in=self.reflect_in, xor_in=self.xor_in,
+                                           reflect_out=self.reflect_out, xor_out=self.xor_out)
+                    crc_calculated = crc16.table_driven(buffer)
+                    if not self.swap_crc_bytes:
+                        self.logger.debug(
+                            f'Calculated checksum is {to_Hex(crc_calculated)}, given CRC is {to_Hex(checksum)}')
+                        data_is_valid = crc_calculated == checksum
+                    else:
+                        self.logger.debug(
+                            f'Calculated and swapped checksum is {to_Hex(swap16(crc_calculated))}, given CRC is {to_Hex(checksum)}')
+                        data_is_valid = swap16(crc_calculated) == checksum
+                else:
+                    self.logger.debug('Not enough bytes read at end to satisfy checksum calculation')
+            else:
+                self.logger.debug('No End sequence marker found in data')
         else:
+            self.logger.debug('No Start sequence marker found in data')
+
+        if missing_data:
+            data = backup
+            raise NotEnoughDataException("")
+
+        if not data_is_valid:
             self.logger.debug("Checksum was not ok, will not parse the data_package")
 
-        cycletime = time.time() - start
+        return data_is_valid
 
-        self.disconnect()
-        self.logger.debug(f"Polling Smartmeter done. Poll cycle took {cycletime} seconds.")
+    def prepare_and_apply_data(self, data):
+        self.logger.debug("Checksum was ok, now parse the data_package")
+        try:
+            values = self._parse(self._prepare(data))
+        except Exception as e:
+            self.logger.error(f'Preparing and parsing data failed with exception {e}')
+        else:
+            for obis in values:
+                self.logger.debug(f'Entry {values[obis]}')
 
-        # release lock
-        self._cyclic_update_active = False
+                if obis in self._items:
+                    for prop in self._items[obis]:
+                        for item in self._items[obis][prop]:
+                            try:
+                                value = values[obis][prop]
+                            except Exception:
+                                pass
+                            else:
+                                item(value, self.get_shortname())
 
     def _parse(self, data):
         # Search SML List Entry sequences like:
@@ -487,8 +626,8 @@ class Smlx(SmartPlugin):
         if len == 0:     # Skip empty optional value
             return result
 
-        if self._dataoffset + len >= builtins.len(data):
-            raise Exception(f"Try to read {len} bytes, but only got {builtins.len(data) - self._dataoffset}")
+        if self._dataoffset + len > builtins.len(data):
+            raise NotEnoughDataException(f"Try to read {len} bytes, but only got {builtins.len(data) - self._dataoffset}")
 
         if type == 0:    # Octet string
             result = data[self._dataoffset:self._dataoffset+len]
