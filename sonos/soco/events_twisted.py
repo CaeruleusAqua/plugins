@@ -335,7 +335,7 @@ class Subscription(SubscriptionBase):
             self._auto_renew_loop.stop()
             self._auto_renew_loop = None
 
-    # pylint: disable=no-self-use, too-many-branches, too-many-arguments
+    # pylint: disable=no-self-use
     def _request(self, method, url, headers, success, unconditional=None):
         """Sends an HTTP request.
 
@@ -355,7 +355,7 @@ class Subscription(SubscriptionBase):
         agent = BrowserLikeRedirectAgent(Agent(reactor))
 
         if headers:
-            for k in headers.keys():
+            for k in list(headers.keys()):
                 header = headers[k]
                 del headers[k]
                 if isinstance(header, (list,)):
@@ -383,7 +383,6 @@ class Subscription(SubscriptionBase):
         return d
 
     def _wrap(self, method, strict, *args, **kwargs):
-
         """This is a wrapper for `Subscription.subscribe`, `Subscription.renew`
         and `Subscription.unsubscribe` which:
 

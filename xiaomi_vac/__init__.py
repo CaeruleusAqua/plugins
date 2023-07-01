@@ -29,6 +29,7 @@ import binascii
 import re
 import time
 from datetime import datetime, timedelta
+from .webif import WebInterface
 
 try:
     from miio.vacuum import Vacuum, VacuumException, Consumable
@@ -50,7 +51,7 @@ from bin.smarthome import VERSION
 
 class Robvac(SmartPlugin):
     ALLOW_MULTIINSTANCE = False
-    PLUGIN_VERSION = "1.2.0"
+    PLUGIN_VERSION = "1.2.3"
 
     def __init__(self, smarthome):
         self._ip = self.get_parameter_value("ip")
@@ -68,8 +69,7 @@ class Robvac(SmartPlugin):
         self._connected = False
         self._data = {}
         self._data['state'] = 'disconnected'
-        if not self.init_webinterface():
-            self._init_complete = False
+        self.init_webinterface(WebInterface)
 
         if self._token == '':
             self.logger.error("Xiaomi_Robvac: No Key for Communication given, Plugin would not start!")
@@ -136,94 +136,129 @@ class Robvac(SmartPlugin):
                     self._data['clean_details_last0'] = (
                         self.vakuum.clean_details(self._data['clean_ids'][0], return_list=False))
                 except Exception:
-                    self._data['clean_details_last0'] = (
-                        self.vakuum.clean_details(self._data['clean_ids'][0]))
-                self._data['last0_area'] = (
-                    round(self._data['clean_details_last0'].area, 2))
-                self._data['last0_complete'] = self._data['clean_details_last0'].complete
-                self._data['last0_duration'] = (
-                    round(self._data['clean_details_last0'].duration.total_seconds() / 60, 2))
-                self._data['last0_start_date'] = (
-                    self._data['clean_details_last0'].start.strftime("%d.%m.%Y"))
-                self._data['last0_start_time'] = (
-                    self._data['clean_details_last0'].start.strftime("%H:%M"))
-                self._data['last0_end_date'] = (
-                    self._data['clean_details_last0'].start.strftime("%d.%m.%Y"))
-                self._data['last0_end_time'] = (
-                    (self._data['clean_details_last0'].start
-                     + self._data['clean_details_last0'].duration).strftime("%H:%M"))
+                    try:
+                        self._data['clean_details_last0'] = (
+                            self.vakuum.clean_details(self._data['clean_ids'][0]))
+                    except Exception as e:
+                        self._data['clean_details_last0'] = []
+                        self.logger.info("No details for last0 clean found")
+                try:
+                    self._data['last0_area'] = (
+                        round(self._data['clean_details_last0'].area, 2))
+                    self._data['last0_complete'] = self._data['clean_details_last0'].complete
+                    self._data['last0_duration'] = (
+                        round(self._data['clean_details_last0'].duration.total_seconds() / 60, 2))
+                    self._data['last0_start_date'] = (
+                        self._data['clean_details_last0'].start.strftime("%d.%m.%Y"))
+                    self._data['last0_start_time'] = (
+                        self._data['clean_details_last0'].start.strftime("%H:%M"))
+                    self._data['last0_end_date'] = (
+                        self._data['clean_details_last0'].start.strftime("%d.%m.%Y"))
+                    self._data['last0_end_time'] = (
+                        (self._data['clean_details_last0'].start
+                         + self._data['clean_details_last0'].duration).strftime("%H:%M"))
+                except Exception:
+                    self._data['last0_complete'] = ''
+                    pass
 
                 try:
                     self._data['clean_details_last1'] = (
                         self.vakuum.clean_details(self._data['clean_ids'][1], return_list=False))
                 except Exception:
-                    self._data['clean_details_last1'] = (
-                        self.vakuum.clean_details(self._data['clean_ids'][1]))
-                self._data['last1_area'] = (
-                    round(self._data['clean_details_last1'].area, 2))
-                self._data['last1_complete'] = self._data['clean_details_last1'].complete
-                self._data['last1_duration'] = (
-                    round(self._data['clean_details_last1'].duration.total_seconds() / 60, 2))
-                self._data['last1_start_date'] = (
-                    self._data['clean_details_last1'].start.strftime("%d.%m.%Y"))
-                self._data['last1_start_time'] = (
-                    self._data['clean_details_last1'].start.strftime("%H:%M"))
-                self._data['last1_end_date'] = (
-                    self._data['clean_details_last1'].start.strftime("%d.%m.%Y"))
-                self._data['last1_end_time'] = (
-                    (self._data['clean_details_last1'].start
-                     + self._data['clean_details_last1'].duration).strftime("%H:%M"))
+                    try:
+                        self._data['clean_details_last1'] = (
+                            self.vakuum.clean_details(self._data['clean_ids'][1]))
+                    except Exception as e:
+                        self._data['clean_details_last1'] = []
+                        self.logger.info("No details for last1 clean found")
+
+                try:
+                    self._data['last1_area'] = (
+                        round(self._data['clean_details_last1'].area, 2))
+                    self._data['last1_complete'] = self._data['clean_details_last1'].complete
+                    self._data['last1_duration'] = (
+                        round(self._data['clean_details_last1'].duration.total_seconds() / 60, 2))
+                    self._data['last1_start_date'] = (
+                        self._data['clean_details_last1'].start.strftime("%d.%m.%Y"))
+                    self._data['last1_start_time'] = (
+                        self._data['clean_details_last1'].start.strftime("%H:%M"))
+                    self._data['last1_end_date'] = (
+                        self._data['clean_details_last1'].start.strftime("%d.%m.%Y"))
+                    self._data['last1_end_time'] = (
+                        (self._data['clean_details_last1'].start
+                         + self._data['clean_details_last1'].duration).strftime("%H:%M"))
+                except Exception:
+                    self._data['last1_complete'] = ''
+                    pass
 
                 try:
                     self._data['clean_details_last2'] = (
                         self.vakuum.clean_details(self._data['clean_ids'][2], return_list=False))
                 except Exception:
-                    self._data['clean_details_last2'] = (
-                        self.vakuum.clean_details(self._data['clean_ids'][2]))
-                self._data['last2_area'] = (
-                    round(self._data['clean_details_last2'].area, 2))
-                self._data['last2_complete'] = self._data['clean_details_last2'].complete
-                self._data['last2_duration'] = (
-                    round(self._data['clean_details_last2'].duration.total_seconds() / 60, 2))
-                self._data['last2_start_date'] = (
-                    self._data['clean_details_last2'].start.strftime("%d.%m.%Y"))
-                self._data['last2_start_time'] = (
-                    self._data['clean_details_last2'].start.strftime("%H:%M"))
-                self._data['last2_end_date'] = (
-                    self._data['clean_details_last2'].start.strftime("%d.%m.%Y"))
-                self._data['last2_end_time'] = (
-                     (self._data['clean_details_last2'].start
-                      + self._data['clean_details_last2'].duration).strftime("%H:%M"))
+                    try:
+                        self._data['clean_details_last2'] = (
+                            self.vakuum.clean_details(self._data['clean_ids'][2]))
+                    except Exception as e:
+                        self._data['clean_details_last2'] = []
+                        self.logger.info("No details for last2 clean found")
+
+                try:
+                    self._data['last2_area'] = (
+                        round(self._data['clean_details_last2'].area, 2))
+                    self._data['last2_complete'] = self._data['clean_details_last2'].complete
+                    self._data['last2_duration'] = (
+                        round(self._data['clean_details_last2'].duration.total_seconds() / 60, 2))
+                    self._data['last2_start_date'] = (
+                        self._data['clean_details_last2'].start.strftime("%d.%m.%Y"))
+                    self._data['last2_start_time'] = (
+                        self._data['clean_details_last2'].start.strftime("%H:%M"))
+                    self._data['last2_end_date'] = (
+                        self._data['clean_details_last2'].start.strftime("%d.%m.%Y"))
+                    self._data['last2_end_time'] = (
+                         (self._data['clean_details_last2'].start
+                          + self._data['clean_details_last2'].duration).strftime("%H:%M"))
+                except Exception:
+                    self._data['last2_complete'] = ''
+                    pass
 
                 try:
                     self._data['clean_details_last3'] = (
                         self.vakuum.clean_details(self._data['clean_ids'][3], return_list=False))
                 except Exception:
-                    self._data['clean_details_last3'] = (
-                        self.vakuum.clean_details(self._data['clean_ids'][3]))
-                self._data['last3_area'] = (
-                    round(self._data['clean_details_last3'].area, 2))
-                self._data['last3_complete'] = self._data['clean_details_last3'].complete
-                self._data['last3_duration'] = (
-                    round(self._data['clean_details_last3'].duration.total_seconds() / 60, 2))
-                self._data['last3_start_date'] = (
-                    self._data['clean_details_last3'].start.strftime("%d.%m.%Y"))
-                self._data['last3_start_time'] = (
-                    self._data['clean_details_last3'].start.strftime("%H:%M"))
-                self._data['last3_end_date'] = (
-                    self._data['clean_details_last3'].start.strftime("%d.%m.%Y"))
-                self._data['last3_end_time'] = (
-                    (self._data['clean_details_last3'].start
-                     + self._data['clean_details_last3'].duration).strftime("%H:%M"))
+                    try:
+                        self._data['clean_details_last3'] = (
+                            self.vakuum.clean_details(self._data['clean_ids'][3]))
+                    except Exception as e:
+                        self._data['clean_details_last3'] = []
+                        self.logger.info("No details for last3 clean found")
+
+                try:
+                    self._data['last3_area'] = (
+                        round(self._data['clean_details_last3'].area, 2))
+                    self._data['last3_complete'] = self._data['clean_details_last3'].complete
+                    self._data['last3_duration'] = (
+                        round(self._data['clean_details_last3'].duration.total_seconds() / 60, 2))
+                    self._data['last3_start_date'] = (
+                        self._data['clean_details_last3'].start.strftime("%d.%m.%Y"))
+                    self._data['last3_start_time'] = (
+                        self._data['clean_details_last3'].start.strftime("%H:%M"))
+                    self._data['last3_end_date'] = (
+                        self._data['clean_details_last3'].start.strftime("%d.%m.%Y"))
+                    self._data['last3_end_time'] = (
+                        (self._data['clean_details_last3'].start
+                         + self._data['clean_details_last3'].duration).strftime("%H:%M"))
+                except Exception:
+                    self._data['last3_complete'] = ''
+                    pass
 
                 self.logger.debug("Xiaomi_Robvac: historic id1 {}, "
-                                  "id2{}, id3 {}".format(
+                                  "id2 {}, id3 {}".format(
                                         self._data['clean_details_last0'],
                                         self._data['clean_details_last1'],
                                         self._data['clean_details_last2']))
 
                 self.logger.debug("Xiaomi_Robvac: Clean Run complete id1 {}, "
-                                  "id2{}, id3 {}".format(
+                                  "id2 {}, id3 {}".format(
                                        self._data['last1_complete'],
                                        self._data['last2_complete'],
                                        self._data['last3_complete'],))
@@ -448,6 +483,7 @@ class Robvac(SmartPlugin):
         if self.has_iattr(item.conf, 'robvac'):
             for message in item.get_iattr_value(item.conf, 'robvac'):
                 self.logger.debug("Xiaomi_Robvac: update_item_read {0}".format(message))
+
 # ------------------------------------------
 #    Webinterface Methoden
 # ------------------------------------------
@@ -459,89 +495,3 @@ class Robvac(SmartPlugin):
         info['cycle'] = self._cycle
         info['connected'] = self._connected
         return info
-
-    def init_webinterface(self):
-        """"
-        Initialize the web interface for this plugin
-
-        This method is only needed if the plugin is implementing a web interface
-        """
-        try:
-            self.mod_http = Modules.get_instance().get_module('http')
-        except Exception:
-            self.mod_http = None
-        if self.mod_http is None:
-            self.logger.error("Plugin '{}': Not initializing the web interface".format(self.get_shortname()))
-            return False
-
-        # set application configuration for cherrypy
-        webif_dir = self.path_join(self.get_plugin_dir(), 'webif')
-        config = {
-            '/': {
-                'tools.staticdir.root': webif_dir,
-            },
-            '/static': {
-                'tools.staticdir.on': True,
-                'tools.staticdir.dir': 'static'
-            }
-        }
-
-        self.logger.debug("Plugin '{0}': {1}, {2}, {3}, {4}, {5}".format(
-            self.get_shortname(), webif_dir, self.get_shortname(),
-            config, self.get_classname(), self.get_instance_name()))
-        # Register the web interface as a cherrypy app
-        self.mod_http.register_webif(WebInterface(webif_dir, self),
-                                     self.get_shortname(),
-                                     config,
-                                     self.get_classname(), self.get_instance_name(),
-                                     description='')
-
-        return True
-
-
-# ------------------------------------------
-#    Webinterface of the plugin
-# ------------------------------------------
-
-import cherrypy
-from jinja2 import Environment, FileSystemLoader
-
-
-class WebInterface(SmartPluginWebIf):
-
-    def __init__(self, webif_dir, plugin):
-        """
-        Initialization of instance of class WebInterface
-
-        :param webif_dir: directory where the webinterface of the plugin resides
-        :param plugin: instance of the plugin
-        :type webif_dir: str
-        :type plugin: object
-        """
-        self.logger = logging.getLogger(__name__)
-        self.webif_dir = webif_dir
-        self.plugin = plugin
-        self.tplenv = self.init_template_environment()
-        self.logger.debug("Plugin : Init Webif")
-        self.items = Items.get_instance()
-
-    @cherrypy.expose
-    def index(self, reload=None):
-        """
-        Build index.html for cherrypy
-        Render the template and return the html file to be delivered to the browser
-        :return: contents of the template after beeing rendered
-        """
-        plgitems = []
-        for item in self.items.return_items():
-            if ('robvac' in item.conf):
-                plgitems.append(item)
-        self.logger.debug("Plugin : Render index Webif")
-        tmpl = self.tplenv.get_template('index.html')
-        return tmpl.render(plugin_shortname=self.plugin.get_shortname(),
-                           plugin_version=self.plugin.get_version(),
-                           plugin_info=self.plugin.get_info(),
-                           p=self.plugin,
-                           connection=self.plugin.get_connection_info(),
-                           webif_dir=self.webif_dir,
-                           items=sorted(plgitems, key=lambda k: str.lower(k['_path'])))

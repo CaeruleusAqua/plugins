@@ -409,6 +409,17 @@ after the url was added to the Sonos speaker. If you set this item to ```True```
 immediately, ```False``` otherwise. (see example item configuration). You can omit this child item, the default
 setting is 'True'. This is a group command and effects all speakers in the group.
 
+#### play_sharelink
+```write```
+
+Plays a given sharelink, e.g. a Spotify sharelink. You need a Spotify premium account to play links. The free account does not support sharelinks. 
+
+_child item_ ```start_after```:
+If you add an child item (type ```bool```) with an attribute ```sonos_attrib: start_after``` you can control the behaviour
+after the sharelink was added to the Sonos speaker. If you set this item to ```True```, the speaker starts playing
+immediately, ```False``` otherwise. (see example item configuration). You can omit this child item, the default
+setting is 'True'. This is a group command and effects all speakers in the group.
+
 #### previous
 ```write``` ```visu```
 
@@ -447,6 +458,13 @@ Returns a list of Sonos playlists. These playlists can be loaded by the ```load_
 
 Sets / gets the status light indicator of a speaker. 'True' to turn the light on, 'False' to turn it off. The value is 
 NOT updated in real-time. For each speaker discover cycle the item will be updated.
+
+#### buttons_enabled
+```read``` ```write```
+
+Sets / gets the state of the buttons/touch enabled feature of a speaker. 'True' to enable button/touch control, 'False' to disable it. The value is 
+NOT updated in real-time. For each speaker discover cycle the item will be updated.
+
 
 #### stop
 ```read``` ```write``` ```visu```

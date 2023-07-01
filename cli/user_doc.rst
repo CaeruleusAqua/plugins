@@ -1,8 +1,22 @@
-.. index:: Plugins; CLI (CommandLine Interface)
-.. index:: CLI
+.. index:: Plugins; cli (CommandLine Interface)
+.. index:: cli
 
+===
 cli
-###
+===
+
+.. image:: webif/static/img/plugin_logo.svg
+   :alt: plugin logo
+   :width: 300px
+   :height: 300px
+   :scale: 50 %
+   :align: left
+
+Dieses Plugin bietet einen Zugriff über Telnet auf SmartHomeNG.
+
+Über das Plugin können diverse Befehle an SmartHomeNG zur Auflistung, Debugging und Manipulation
+von Items, Logiken, Plugins und internen Objekten geschickt werden.
+
 
 Konfiguration
 =============
@@ -10,19 +24,10 @@ Konfiguration
 Die Informationen zur Konfiguration des Plugins sind unter :doc:`/plugins_doc/config/cli` beschrieben.
 
 
-Weiterführende Informationen
-============================
-
-Das CLI Plugin bietet einen Zugriff über Telnet auf SmartHomeNG.
-
-Über das Plugin können diverse Befehle an SmartHomeNG zur Auflistung, Debugging und Manipulation 
-von Items, Logiken, Plugins und internen Objekten geschickt werden. 
-
-
 Plugin Konfigurationsparameter
-==============================
+------------------------------
 
-Das Plugin kann über die folgende Konfiguration in der Datei etc/plugins.conf akitviert werden:
+Das Plugin kann über die folgende Konfiguration in der Datei etc/plugins.yaml akitviert werden:
 
 .. code-block: yaml
    cli:
@@ -49,13 +54,13 @@ Das Plugin kann über die folgende Konfiguration in der Datei etc/plugins.conf a
 
 
 
-Zugriff auf die CLI 
+Zugriff auf die CLI
 ===================
 
 Linux
 -----
 
-`telnet localhost 2323` 
+`telnet localhost 2323`
 
 Zugriff via Windows / Putty
 ---------------------------
@@ -78,7 +83,7 @@ Connection - Telnet:
 - Return key sends Telnet New Line instead of ^M -> Haken entfernen
 
 
-CLI Befehle 
+CLI Befehle
 ===========
 
 +--------------------------+----------------------------------------------------------------------------------------------+
@@ -90,7 +95,7 @@ CLI Befehle
 +--------------------------+----------------------------------------------------------------------------------------------+
 | if <item>                | Listet das angegebene Item und alle Child-Items dazu mit Werten auf                          |
 +--------------------------+----------------------------------------------------------------------------------------------+
-| ii <item>                | Dumpt Detail-Information über das angegebene Item - Kommando Alias: dump                     |    
+| ii <item>                | Dumpt Detail-Information über das angegebene Item - Kommando Alias: dump                     |
 +--------------------------+----------------------------------------------------------------------------------------------+
 | il                       | Listet alle Items mit Werten - Kommando Alias: la                                            |
 +--------------------------+----------------------------------------------------------------------------------------------+
@@ -129,3 +134,7 @@ CLI Befehle
 | quit, q                  | Beendet die CLI Session                                                                      |
 +--------------------------+----------------------------------------------------------------------------------------------+
 
+Web Interface
+=============
+
+Das Webinterface zeigt nur die ingestellten Parameter des Plugins an und bietet darüber hinaus keine Funktionalität.

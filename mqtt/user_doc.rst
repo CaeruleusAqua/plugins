@@ -1,11 +1,16 @@
-.. index:: Plugins; MQTT (MQTT Protokoll Implementierung)
-.. index:: MQTT
+.. index:: Plugins; mqtt (MQTT Protokoll Implementierung)
+.. index:: mqtt; mqtt Plugin
 
 ====
 mqtt
 ====
 
-MQTT Plugin, welches das MQTT Module von SmartHomeNG zur Kommunikation nutzt.
+.. image:: webif/static/img/plugin_logo.png
+   :alt: plugin logo
+   :width: 300px
+   :height: 300px
+   :scale: 50 %
+   :align: left
 
 
 Konfiguration
@@ -54,4 +59,3 @@ wenn der Parameter **broker_monitoring** in etc/plugin.yaml auf **True** gesetzt
 
 .. image:: assets/webif2.jpg
    :class: screenshot
-

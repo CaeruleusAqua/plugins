@@ -17,13 +17,12 @@ from .utils import really_utf8
 
 _LOG = logging.getLogger(__name__)
 
-# pylint: disable=too-many-locals, too-many-branches, too-many-statements
-
 
 def discover(
     timeout=5,
     include_invisible=False,
     interface_addr=None,
+    household_id="Sonos",
     allow_network_scan=False,
     **network_scan_kwargs
 ):
@@ -54,6 +53,9 @@ def discover(
             the system default interface(s) for UDP multicast messages will be
             used. This is probably what you want to happen. Defaults to
             `None`.
+        household_id (str): Supply a Sonos Household ID to restrict discovery
+            to a specific household. Useful in multi-household networks. In
+            the default case the first player to respond will be used.
         allow_network_scan (bool, optional): If normal discovery fails, fall
             back to a scan of the attached network(s) to detect Sonos
             devices.
@@ -190,7 +192,7 @@ def discover(
             for _sock in response:
                 data, addr = _sock.recvfrom(1024)
                 _LOG.debug('Received discovery response from %s: "%s"', addr, data)
-                if b"Sonos" in data:
+                if really_utf8(household_id) in data:
                     # Now we have an IP, we can build a SoCo instance and query
                     # that player for the topology to find the other players.
                     # It is much more efficient to rely upon the Zone
@@ -205,10 +207,17 @@ def discover(
 
     if allow_network_scan:
         _LOG.debug("Falling back to network scan discovery")
-        return scan_network(
-            include_invisible=include_invisible,
-            **network_scan_kwargs,
-        )
+        if household_id == "Sonos":
+            return scan_network(
+                include_invisible=include_invisible,
+                **network_scan_kwargs,
+            )
+        else:
+            return scan_network_by_household_id(
+                household_id,
+                include_invisible=include_invisible,
+                **network_scan_kwargs,
+            )
 
 
 def any_soco(allow_network_scan=False, **network_scan_kwargs):
@@ -272,12 +281,11 @@ def by_name(name, allow_network_scan=False, **network_scan_kwargs):
     return None
 
 
-# pylint: disable=too-many-arguments
 def scan_network(
     include_invisible=False,
     multi_household=False,
     max_threads=256,
-    scan_timeout=0.1,
+    scan_timeout=0.5,
     min_netmask=24,
     networks_to_scan=None,
 ):
@@ -434,7 +442,7 @@ def scan_network_by_household_id(
     network_scan_kwargs["multi_household"] = True
     zones = scan_network(include_invisible=include_invisible, **network_scan_kwargs)
     if zones:
-        zones = {zone for zone in zones if zone.household_id == household_id}
+        zones = {zone for zone in zones if household_id in zone.household_id}
     _LOG.debug("Returning zones: %s", zones)
     return zones
 

@@ -64,13 +64,16 @@ class Viessmann(SmartPlugin):
     '''
     ALLOW_MULTIINSTANCE = False
 
-    PLUGIN_VERSION = '1.2.2'
+    PLUGIN_VERSION = '1.2.3'
 
 #
 # public methods
 #
 
     def __init__(self, sh, *args, standalone='', logger=None, **kwargs):
+
+        # Call init code of parent class (SmartPlugin)
+        super().__init__()
 
         # standalone mode: just setup basic info
         if standalone:
@@ -1255,7 +1258,7 @@ class Viessmann(SmartPlugin):
                     value = bool(value)
                 else:
                     value = int(value)
-                valuebytes = self._int2bytes(value, commandvaluebytes)
+                valuebytes = self._int2bytes(value, commandvaluebytes, byteorder='little')
                 self.logger.debug(f'Created value bytes for type {valuetype} as hexstring: {self._bytes2hexstring(valuebytes)} and as bytes: {valuebytes}')
             else:
                 self.logger.error(f'Type {valuetype} not definied for creating write command bytes')
@@ -1411,8 +1414,9 @@ class Viessmann(SmartPlugin):
         self.logger.debug(f'Response decoded to: commandcode: {commandcode}, responsedatacode: {responsedatacode}, valuebytecount: {valuebytecount}, responsetypecode: {responsetypecode}')
         self.logger.debug(f'Rawdatabytes formatted: {self._bytes2hexstring(rawdatabytes)} and unformatted: {rawdatabytes}')
 
-        # Process response for items if read response and not error
-        if responsedatacode == 1 and responsetypecode != 3:
+        # Process response for items if response and not error
+        # added: only in P300 or if read_response is set, do not try if KW replies with 0x00 (OK)
+        if responsedatacode == 1 and responsetypecode != 3  and (self._protocol == 'P300' or read_response):
 
             # parse response if command config is available
             commandname = self._commandname_by_commandcode(commandcode)
@@ -1650,7 +1654,7 @@ class Viessmann(SmartPlugin):
             self.logger.error('No bytes received to calculate checksum')
         return checksum
 
-    def _int2bytes(self, value, length, signed=False):
+    def _int2bytes(self, value, length, signed=False, byteorder='big'):
         '''
         Convert value to bytearray with respect to defined length and sign format.
         Value exceeding limit set by length and sign will be truncated
@@ -1665,7 +1669,7 @@ class Viessmann(SmartPlugin):
         :rtype: bytearray
         '''
         value = value % (2 ** (length * 8))
-        return value.to_bytes(length, byteorder='big', signed=signed)
+        return value.to_bytes(length, byteorder=byteorder, signed=signed)
 
     def _bytes2int(self, rawbytes, signed):
         '''

@@ -6,8 +6,62 @@ plugin_translations:
 
     # Alternative format for translations of longer texts:
     'Philips Explanation':
-        de: 'Schritt fuer Schritt Anleitung zur Bindung/Authorisierung mit dem Philips TV.'
-        en: 'Step by Step manual for generating an OAuth2 token for Vorwerk API, compatible with new MyKobold APP.'
+        de: 'Schritt für Schritt Anleitung zur Bindung/Authorisierung mit dem Philips TV.'
+        en: 'Step by Step manual for pairing with a Philips TV.'
+
+    'Bestätigen':
+        de: '='
+        en: 'Confirm'
+
+    'Hier TV Code eintragen':
+        de: '='
+        en: 'Insert TV code here'
+
+    'Philips TV IP überpruefen':
+        de: '='
+        en: 'Doublechek IP Adress of Philips TV'
+
+    'Einstellung über plugin.yaml':
+        de: '='
+        en: 'Settings via plugin.yaml'
+
+    'Code des TVs eingeben':
+        de: '='
+        en: 'Insert TV code here'
+
+    'Freischaltung bestätigen':
+        de: '='
+        en: 'Confirm pairing'
+
+    'Paring Code wird vom TV angezeigt':
+        de: '='
+        en: 'Pairing code is displayed on TV'
+
+    'Automatisch generiert oder Einstellung über plugin.yaml':
+        de: '='
+        en: 'Automatically generated or set via plugin.yaml'
+
+    'Mit TV verbinden':
+        de: '='
+        en: 'Pair with TV'
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     
 
 

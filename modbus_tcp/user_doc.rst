@@ -11,7 +11,7 @@ SmarthomeNG plugin, zum Lesen von Register über ModBusTCP
 Anforderungen
 -------------
 * Python > 3.6
-* pymodbus >= 1.4.0
+* pymodbus >= 2.5.3
 * SmarthomeNG >= 1.8.0
 
 pymodbus
@@ -141,9 +141,25 @@ siehe auch example.yaml
             modBusByteOrder: 'Endian.Little'    #(optional) default: 'Endian.Big'
             modBusWordOrder: 'Endian.Little'    #(optional) default: 'Endian.Big'
             modBusUnit: '71'                    #(optional) default: slaveUnit aus der Plugin-Konfig
+        
+        # Multiinstanz:
+        # Jedes Attribut mit der @<instance> ergänzen. Der Name der Instance muss in der Plugin Konfiguration festgelegt werden.
+        M1:
+            type: bool
+            name: M1
+            modBusObjectType@logomb: Coil
+            modBusAddress@logomb: 8256
+            modBusDataType@logomb: bit
+            modBusDirection@logomb: read_write
+        
 
 Changelog
 ---------
+V1.0.8  work with newer versions of pymodbus too, minimum pymodbus now 2.5.3
+
+V1.0.7  keep connection open and use locking to ensure thread safety (CaeruleusAqua and bmxp)
+        Fehler behoben: nicht deklarierte Variable "TypeStr" und "bitstr"
+
 V1.0.6  schreiben von Register (HoldingRegister, Coil)
 
 V1.0.5  kleine Fehler behoben

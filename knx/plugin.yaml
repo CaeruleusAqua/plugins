@@ -10,11 +10,10 @@ plugin:
     tester: psilo909, onkelandy, Sandman60, brandst
     state: qa-passed
     keywords: KNX knxd listen cache bus
-    documentation: http://smarthomeng.de/user/plugins/knx/user_doc.html
     support: https://knx-user-forum.de/forum/supportforen/smarthome-py/1552531-support-thread-zum-knx-plugin
 
     sh_minversion: 1.9.0          # minimum shNG version to use this plugin
-    version: 1.8.0                 # Plugin version
+    version: 1.8.5                 # Plugin version
 #    sh_maxversion:                # maximum shNG version to use this plugin (leave empty if latest)
     multi_instance: true           # plugin supports multi instance
     restartable: true
@@ -52,12 +51,42 @@ parameters:
           - 'logger'
           - 'true'
           - 'false'
+          - 'True'
+          - 'False'
         valid_list_description:
-            de: ['Ein', 'Aus', 'in eigenen Logger', 'Ein', 'Aus']
-            en: ['On', 'Off', 'to own logger', 'On', 'Off']
+            de: ['Ein', 'Aus', 'in eigenen Logger', 'Ein', 'Aus', 'Ein', 'Aus']
+            en: ['On', 'Off', 'to own logger', 'On', 'Off', 'On', 'Off']
         description:
             de: "Wenn auf 'on'/'true' gesetzt, wird jedes KNX-Paket im Standard-Logger protokolliert. Wenn 'logger' eingestellt ist, werden alle KNX-Meldungen in einem separaten Logger 'knx_busmonitor' protokolliert."
             en: "If set to 'on'/'true' every KNX packet will be logged to the default plugin logger. If set to 'logger', all knx messages will be logged to a separate logger 'knx_busmonitor'"
+
+    loglevel_knxd_cache_problems:
+        type: str
+        default: 'INFO'
+        valid_list:
+          - 'DEBUG'
+          - 'WARNING'
+          - 'INFO'
+          - 'ERROR'
+          - 'NOTSET'
+        #   CRITICAL    50
+        #   ERROR       40
+        #   WARNING     30
+        #   INFO        20
+        #   DEBUG       10
+        #   NOTSET      0
+        valid_list_description:
+            de: ['DEBUG', 'WARNING', 'INFO', 'ERROR', 'NOTSET']
+            en: ['DEBUG', 'WARNING', 'INFO', 'ERROR', 'NOTSET']
+        description:
+            de: >
+                Beim Start von SmartHomeNG werden Items mit dem Attribut knx_cache direkt vom knxd eingelesen.
+                Wenn die Werte der Gruppenadressen nicht verfügbar sind, liefert der knxd ein fehlerhaftes Paket.
+                Mit dem hier festgelegten Loglevel wird dieses Paket protokolliert.
+            en: >
+                At start of SmartHomeNG items with attribute knx_cache will be read directly from knxd.
+                If the requested group adresses are not available, knxd will deliver a malformed telegram.
+                This malformed telegram will be logged with this loglevel.
 
     log_own_packets:
         type: bool
@@ -170,6 +199,7 @@ item_attributes:
          - '232'
          - '251'
          - '275.100'
+         - 'hex'
         valid_list_description:
             de:
              - 'Schalten (1 Bit) -> bool'
@@ -206,6 +236,7 @@ item_attributes:
              - 'RGB: [0, 0, 0] - [255, 255, 255] (3 Byte) -> list'
              - 'RGBW: [0, 0, 0, 0] - [255, 255, 255, 255] (4 Byte)-> list'
              - 'Quadrupel mit Solltemperaturen für Komfort, Standby, Nachtabsenkung, Frostschutz (4 Fließkommazahlen mit 16 Bit) -> list'
+             - 'Empfangen von Roh-/Hex-Daten (um Key IDs des alten Winkhaus Schließsystems auszulesen'
             en:
              - 'Switch (1 Bit) -> bool'
              - 'forced control (2 Bit) -> list'
@@ -241,6 +272,7 @@ item_attributes:
              - 'RGB: [0, 0, 0] - [255, 255, 255] (3 Byte) -> list'
              - 'RGBW: [0, 0, 0, 0] - [255, 255, 255, 255] (4 Byte)-> list'
              - 'Quadrupel with set temperatures comfort, standby, night reduction, frost protection (4 float with 16 Bit) -> list'
+             - 'Receive raw/hex data (to read out Key IDs from the old Winkhaus locking systems'
         description:
             de: 'Dieses Attribut setzt den Typ des KNX-Datenpunktes, der für die Konvertierung der KNX-Nachrichten in das interne SmartHomeNG-Format verwendet wird. Die Angabe ist zwingend erforderlich ist. Wenn Sie keinen Wert angeben, wird das Element vom Plugin ignoriert. Der DPT muss dem Typ des Artikels entsprechen!'
             en: "This attribute set the KNX datapoint type used for conversion of the KNX messages to internal SmartHomeNG format. It is mandatory. If you don't provide one the item will be ignored by the plugin. The DPT has to match the type of the item! BE CAREFUL to put the value in quotes to ensure they are interpreted as strings and not as numbers!"
@@ -260,14 +292,14 @@ item_attributes:
     knx_init:
         type: knx_ga
         description:
-            de: 'Gruppenadresse für die Initialisierung des Items. Der KNX-Bus wird nach dem Wert abgefragt. Die Angabe impliziert knx_listen, also muss knx_listen nicht für diese Gruppenadresse angegeben werden. Wie bei knx_listen kann eine Liste von GAs angegeben werden. Dann wird der erste Eintrag der Liste für die Initialisierung verwendet.'
-            en: 'Group address to use for initialization of the item. The KNX bus is queried for the value. It implies knx_listen, so knx_listen need not to be specified for this group address. Like for knx_listen a list of GAs can be specified. In this case, the first list entry is used to read the KNX cache.'
+            de: 'Gruppenadresse für die Initialisierung des Items. Der KNX-Bus wird nach dem Wert abgefragt. Die Angabe impliziert knx_listen, also muss knx_listen nicht für diese Gruppenadresse angegeben werden.'
+            en: 'Group address to use for initialization of the item. The KNX bus is queried for the value. It implies knx_listen, so knx_listen need not to be specified for this group address.'
 
     knx_cache:
         type: knx_ga
         description:
-            de: 'Gruppenadresse für die Initialisierung des Items. Der Wert wird aus dem Cache von KNXD/EIBD gelesen. Wenn kein Cache-Wert vorhanden ist, wird der KNX-Bus nach dem Wert abgefragt. Die Angabe impliziert knx_listen, also muss knx_listen nicht für diese Gruppenadresse angegeben werden. Wie bei knx_listen kann eine Liste von GAs angegeben werden. Dann wird der erste Eintrag der Liste für die Initialisierung verwendet.'
-            en: 'Group address to use for initialization of the item. The value is read from the cache of KNXD/EIBD. If no cached value exists, the KNX bus is queried for the value. It implies knx_listen, so knx_listen need not to be specified for this group address. Like for knx_listen a list of GAs can be specified. In this case, the first list entry is used to read the KNX cache.'
+            de: 'Gruppenadresse für die Initialisierung des Items. Der Wert wird aus dem Cache von KNXD/EIBD gelesen. Wenn kein Cache-Wert vorhanden ist, wird der KNX-Bus nach dem Wert abgefragt. Die Angabe impliziert knx_listen, also muss knx_listen nicht für diese Gruppenadresse angegeben werden.'
+            en: 'Group address to use for initialization of the item. The value is read from the cache of KNXD/EIBD. If no cached value exists, the KNX bus is queried for the value. It implies knx_listen, so knx_listen need not to be specified for this group address.'
 
     knx_reply:
         type: list(knx_ga)

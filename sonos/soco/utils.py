@@ -136,7 +136,7 @@ class deprecated:
     """
 
     # pylint really doesn't like decorators!
-    # pylint: disable=invalid-name, too-few-public-methods
+    # pylint: disable=invalid-name
     # pylint: disable=missing-docstring
 
     def __init__(
@@ -154,7 +154,6 @@ class deprecated:
     def __call__(self, deprecated_fn):
         @functools.wraps(deprecated_fn)
         def decorated(*args, **kwargs):
-
             message = "Call to deprecated function {}.".format(deprecated_fn.__name__)
             if self.will_be_removed_in is not None:
                 message += " Will be removed in version {}.".format(

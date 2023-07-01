@@ -1,12 +1,29 @@
 .. index:: Plugins; hue2 (Philips Hue v2)
-.. index:: hue hue2
+.. index:: hue2 hue
 
 ====
 hue2
 ====
 
+.. image:: webif/static/img/plugin_logo.png
+   :alt: plugin logo
+   :width: 300px
+   :height: 300px
+   :scale: 50 %
+   :align: left
+
+
 Das Plugin unterstützt Philips Hue Bridges. Es ist eine komplette Neuentwicklung mit einem deutlich erweiterten
-Funktionsumfang gegenüber dem alten Hue Plugin:
+Funktionsumfang gegenüber dem alten Hue Plugin.
+
+Es unterstützt die zweite Generation der Philips Hue Bridges und bisher auch noch die Bridges der ersten Generation,
+die von Philips inzwischen retired wurden und keine Unterstützung durch Philips mehr erfahren.
+
+
+Neue Features
+=============
+
+Das Plugin bietet im Vergleich zum **hue** Plugin zusätzlich folgende Features:
 
 - Die Authorisierung an der Hue Bride ist in das Plugin integriert und erfolgt über das Webinferface des Plugins.
 - Das Plugin hat eine Funktion um aktive Hue Bridges im lokalen Netzwerk zu finden.
@@ -102,7 +119,9 @@ Das hat die selbe Wirkung, als hätte man ohne Struktur Template folgende Item-K
 
 .. code-block:: yaml
 
-        test_leuchte:
+    test_leuchte:
+        hue2_id: 3
+
         name: Vorlage-Struktur für eine Hue Leuchte
         type: foo
         hue2_resource: light
@@ -129,7 +148,7 @@ Das hat die selbe Wirkung, als hätte man ohne Struktur Template folgende Item-K
             type: num
             hue2_resource: ..:.
             hue2_id: ..:.
-            hue2_functione: sat
+            hue2_function: sat
 
         ct:
             type: num
@@ -154,7 +173,7 @@ Mit ``hue2_resource`` wird festgelegt, auf welche Resource der Bridge zugegriffe
 
 .. note::
 
-    Bisher sind nur die Resouce-Typen ``light`` und ``group`` implementiert.
+    Bisher sind nur die Resouce-Typen ``light``, ``group`` und ``sensor`` implementiert.
 
 Mit ``hue2_id`` wird festgelegt auf welche Resource des gewählten Typs zugegriffen werden soll. Die Id kann im
 Web Interface im Tab des entsprechenden Resource-Typs nachgesehen werden.
@@ -164,9 +183,11 @@ Für den Resource-Typ ``light`` sind die folgenden Funktionen implementiert (ein
 
     - ``on``
     - ``bri``
+    - ``bri_inc``
     - ``hue``
     - ``sat``
     - ``ct``
+    - ``dict``
     - ``name``
     - ``reachable``
     - ``colormode``
@@ -175,12 +196,28 @@ Für den Resource-Typ ``light`` sind die folgenden Funktionen implementiert (ein
     - ``modelid``
     - ``swversion``
     - ``activate_scene``
+    - ``modify_scene``
+    - ``alert``
+    - ``effect``
+
+Für den Resource-Typ ``sensor`` sind die folgenden Funktionen implementiert, welche nur die Abfrage erlauben:
+
+    - ``daylight``
+    - ``temperature``
+    - ``presence``
+    - ``lightlevel``
+    - ``status``
+
 
 
 Die vollständige Übersicht über die unterstützen Funktionen und die Datentypen dazu kann auf der
 Seite :doc:`/plugins_doc/config/hue2` in der Beschreibung des Item Attributes ``hue2_function`` nachgelesen
 werden.
 
+.. note::
+
+    Pullrequest https://github.com/smarthomeNG/plugins/pull/590 implementierte zusätzliche für hue2_function die
+    zusätzlichen Optionen ``bri_inc`` und ``dict``, welche noch nicht vollständig dokumentiert sind.
 
 Um den Namen der Leuchte mit der Id 3 abzufragen, muss ein Item folgendermaßen konfiguriert werden:
 

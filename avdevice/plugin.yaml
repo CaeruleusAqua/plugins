@@ -3,17 +3,17 @@ plugin:
     # Global plugin attributes
     type: interface                 # plugin type (gateway, interface, protocol, system, web)
     description:
-        de: 'Steuerung von diversen AV Geräten über TCP/IP und RS232 Schnittstelle'
-        en: 'Controlling AV devices via TCP/IP and RS232'
+        de: 'Steuerung eines AV Gerätes über TCP/IP oder RS232 Schnittstelle'
+        en: 'Controlling AV devices via TCP/IP or RS232'
     description_long:
-        de: 'Steuerung von diversen AV Geräten über TCP/IP und RS232 Schnittstelle.
+        de: 'Steuerung eines AV Gerätes über TCP/IP oder RS232 Schnittstelle.
             Das Plugin unterstützt eine Vielzahl von AV-Geräten und wurde mit folgenden Geräten getestet:
             - Pioneer AV Receiver < 2016
             - Denon AV Receiver > 2016
             - Epson Projektor < 2010
             - Oppo UHD Player
             '
-        en: 'Controlling AV devices via TCP/IP and RS232
+        en: 'Controlling AV devices via TCP/IP or RS232
             The plugin supports a variety of AV devices and was tested with the following models:
             - Pioneer AV Receiver < 2016
             - Denon AV Receiver > 2016
@@ -28,10 +28,9 @@ plugin:
     state: ready
 
     keywords: av denon pioneer epson oppo player amp receiver projector rs232 telnet tcpip remote control
-#    documentation: https://github.com/smarthomeNG/smarthome/wiki/CLI-Plugin        # url of documentation (wiki) page
     support: https://knx-user-forum.de/forum/supportforen/smarthome-py/1097870-neues-plugin-av-device-f%C3%BCr-yamaha-pioneer-denon-etc
 
-    version: 1.6.3                # Plugin version
+    version: 1.6.4                # Plugin version
     sh_minversion: 1.6            # minimum shNG version to use this plugin
 #    sh_maxversion:                 # maximum shNG version to use this plugin (leave empty if latest)
     multi_instance: True          # plugin supports multi instance
@@ -268,6 +267,7 @@ parameters:
         description_long:
             de: "Verbindet sich das Plugin, werden die Werte automatisch abgefragt, auch wenn kein Depend=Init im Item angegeben ist. Sollen nur Items abgefragt werden, bei denen das depend-Attribut auf init gesetzt ist, sollte dieser Wert auf False gestellt werden."
             en: "As soon as the plugin connects to the device the values get queried automatically even if the Depend=Init is not set in the items. If you want to query only those items that are set explicitly change this value to False."
+
 
 item_attributes:
 
