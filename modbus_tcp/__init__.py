@@ -381,10 +381,16 @@ class modbus_tcp(SmartPlugin):
             return None
 
         if objectType == 'Coil':
-            result = self._Mclient.write_coil(address, value, unit=slaveUnit)
+            if pymodbus_baseversion > 2:
+                result = self._Mclient.write_coil(address, value, slave=slaveUnit)
+            else:
+                result = self._Mclient.write_coil(address, value, unit=slaveUnit)
         elif objectType == 'HoldingRegister':
             registers = builder.to_registers()
-            result = self._Mclient.write_registers(address, registers, unit=slaveUnit)
+            if pymodbus_baseversion > 2:
+                result = self._Mclient.write_registers(address, registers, slave=slaveUnit)
+            else:
+                result = self._Mclient.write_registers(address, registers, unit=slaveUnit)
         elif objectType == 'DiscreteInput':
             self.logger.warning("this object type cannot be written {0}:{1} slaveUnit:{2}".format(objectType, address, slaveUnit))
             return
