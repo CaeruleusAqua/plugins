@@ -158,15 +158,15 @@
 
 {% set tab3title = _('Verwaiste Items') %}
 {% block bodytab3 %}
-	<div class="mb-2">
-		<div id="webif-orphanbuttons" style="margin-left: 10px; margin-bottom: 10px; float:right; white-space: nowrap;">
-			{% if p.remove_orphan or len(p.orphanlist) == 0 %}
-				<button type="button" disabled class="btn btn-shng btn-sm" onclick="if (confirm('{{ _('Wollen Sie alle Datensätze ohne zugehöriges Item wirklich löschen?') }}')) { jQuery.get('cleanup'); $('#cleanup').show();}">{{ _('Datenbank-Cleanup starten') }}</button>
-			{% else %}
-				<button type="button" class="btn btn-shng btn-sm" onclick="if (confirm('{{ _('Wollen Sie alle Datensätze ohne zugehöriges Item wirklich löschen?') }}')) { jQuery.get('cleanup'); $('#cleanup').show(); setTimeout(window.location.reload(), 3000); }">{{ _('Datenbank-Cleanup starten') }}</button>
-			{% endif %}
-		</div>
+<div class="container-fluid m-2 table-resize">
+	<div id="webif-orphanbuttons" style="margin-left: 10px; margin-bottom: 10px; float:right; white-space: nowrap;" class="mb-2">
+		{% if p.remove_orphan or len(p.orphanlist) == 0 %}
+			<button type="button" disabled class="btn btn-shng btn-sm" onclick="if (confirm('{{ _('Wollen Sie alle Datensätze ohne zugehöriges Item wirklich löschen?') }}')) { jQuery.get('cleanup'); $('#cleanup').show();}">{{ _('Datenbank-Cleanup starten') }}</button>
+		{% else %}
+			<button type="button" class="btn btn-shng btn-sm" onclick="if (confirm('{{ _('Wollen Sie alle Datensätze ohne zugehöriges Item wirklich löschen?') }}')) { jQuery.get('cleanup'); $('#cleanup').show(); setTimeout(window.location.reload(), 3000); }">{{ _('Datenbank-Cleanup starten') }}</button>
+		{% endif %}
 	</div>
+
 	<table id="orphantable">
 		<thead>
 		<tr><th></th>
@@ -184,7 +184,20 @@
 			<tr>
 				<td></td>
 				<td id="{{ item }}_orphan_path">{{ item }}</td>
-			    <td id="{{ item }}_orphan_time">{% if language == 'en' %}{{ p.db_lastchange(item).strftime('%m/%d/%Y %H:%M:%S') }}{% else %}{{ p.db_lastchange(item).strftime('%d.%m.%Y %H:%M:%S') }}{% endif %}</td>
+			    <td id="{{ item }}_orphan_time">
+				{% if language == 'en' %}
+					{% if p.db_lastchange(item) is none %}
+						{{ _('Wert invalide') }}
+					{% else %}
+						{{ p.db_lastchange(item).strftime('%m/%d/%Y %H:%M:%S') }}
+					{% endif %}
+				{% else %}
+					{% if p.db_lastchange(item) is none %}
+						{{ _('Wert invalide') }}
+					{% else %}
+						{{ p.db_lastchange(item).strftime('%d.%m.%Y %H:%M:%S') }}
+					{% endif %}
+				{% endif %}</td>
 				<td id="{{ item }}_orphan_type">{{ _(p.db_itemtype(item)) }}</td>
 				<td id="{{ item }}_orphan_id">{{ p.id(item, create=False) }}</td>
 				{%  if p.count_logentries %}
@@ -194,6 +207,7 @@
 		{% endfor %}
 		</tbody>
 	</table>
+</div>
 {% endblock bodytab3 %}
 
 {% block buttons %}

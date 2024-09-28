@@ -11,7 +11,7 @@ plugin:
     #documentation: https://www.smarthomeng.de/user/plugins/alexa4p3/user_doc.html       # url of documentation
     support: https://knx-user-forum.de/forum/supportforen/smarthome-py/1021150-amazon-alexa-plugin
     version: 1.0.2                   # Plugin version
-    sh_minversion: 1.5.2             # minimum shNG version to use this plugin
+    sh_minversion: '1.5.2'             # minimum shNG version to use this plugin
     multi_instance: False            # plugin supports multi instance
     classname: Alexa4P3              # class containing the plugin
     state: ready                     # State of the Plugin
@@ -143,9 +143,24 @@ item_attributes:
         description:
             de: 'URL für das Standbild einer Kamera'
             en: 'URL for the preview picture of the camera'
-#    alexa_alias:
-#        type: str
-#        mandatory: False
-#        description:
-#            de: 'nur für Payload-V2 benötigt'
-#            en: 'only for Payload V2 needed'
+
+    alexa_alias:
+        type: str
+        mandatory: False
+        description:
+            de: 'Alternative Alexa-Gerätenamen, um das Gerät anzusprechen'
+            en: 'alternative Alexa device names to access the device'
+
+    alexa_range_delta:
+        type: str
+        mandatory: False
+        description:
+            de: ''
+            en: ''
+
+    alexa_color_temp_delta:
+        type: str
+        mandatory: False
+        description:
+            de: ''
+            en: ''

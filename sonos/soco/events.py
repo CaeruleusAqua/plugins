@@ -366,6 +366,8 @@ class Subscription(SubscriptionBase):
         auto_renew_thread = AutoRenewThread(
             interval, self._auto_renew_thread_flag, self
         )
+        debugName = 'SonosAutoRenewThread'
+        auto_renew_thread.setName(debugName)
         auto_renew_thread.start()
 
     def _auto_renew_cancel(self):
@@ -403,14 +405,13 @@ class Subscription(SubscriptionBase):
         if response and response.status_code != 412:
             response.raise_for_status()
 
-        if success:
+        if response and success:
             success(response.headers)
         if unconditional:
             unconditional()
 
     # pylint: disable=inconsistent-return-statements
     def _wrap(self, method, strict, *args, **kwargs):
-
         """This is a wrapper for `Subscription.subscribe`, `Subscription.renew`
         and `Subscription.unsubscribe` which:
 
@@ -437,7 +438,6 @@ class Subscription(SubscriptionBase):
         # A lock is used, because autorenewal occurs in
         # a thread
         with self._lock:
-
             try:
                 method(*args, **kwargs)
 

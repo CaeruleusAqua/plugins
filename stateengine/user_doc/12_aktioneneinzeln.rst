@@ -46,12 +46,12 @@ Einziger Unterschied ist, dass die Wertänderung erzwungen wird:
 Wenn das Item bereits den zu setzenden Wert hat, dann ändert
 smarthomeNG das Item nicht. Selbst wenn beim Item das Attribut
 ``enforce_updates: yes`` gesetzt ist, wird zwar der Wert neu
-gesetzt, der von smarthomeNG die Änderungszeit nicht neu gesetzt. Mit
+gesetzt, aber nicht die Änderungszeit. Mit
 dem Attribut ``se_force_<Aktionsname>`` wird das Plugin den Wert
 des Items bei Bedarf zuerst auf einen anderen Wert ändern und dann
 auf dem Zielwert setzen. Damit erfolgt auf jeden Fall eine
 Wertänderung (ggf. sogar zwei) mit allen damit in Zusammenhang
-stehenden Änderungen (eval's, Aktualisierung der Änderungszeiten,
+stehenden Änderungen (evals, Aktualisierung der Änderungszeiten,
 etc).
 
 **Aktion run: Ausführen einer Funktion**
@@ -150,8 +150,50 @@ Es ist möglich, eine Minimumabweichung für
 aktuellen Wert des Items und dem ermittelten neuen Wert kleiner
 ist als die festgelegte Minimumabweichung wird keine Änderung
 vorgenommen. Die Minimumabweichung wird über das Attribut
-``se_mindelta_<Aktionsname>`` auf der Ebene des Regelwerk-Items
-festgelegt.
+``se_mindelta_<Aktionsname>`` auf der Ebene des Regelwerk-Items für alle
+Aktionen mit dem entsprechenden Namen festgelegt. Alternativ kann dieses
+Attribut aber auch für einzelne Aktionen festgelegt und/oder überschrieben werden.
+
+Im angeführten Beispiel werden die Lamellen beim Eintritt in einen Zustand und
+beim Verlassen des Zustands nur dann gesetzt, wenn sich der Wert der Lamellen inzwischen
+um mindestens 10 verändert hat. Wird der Zustand erneut eingenommen (stay), wird der
+Wert hingegen mit 5 überschrieben.
+
+.. code-block:: yaml
+
+    #items/item.yaml
+    raffstore1:
+        automatik:
+            struct: stateengine.general
+            rules:
+                se_item_height: raffstore1.hoehe # Definition des zu ändernden Höhe-Items
+                se_item_lamella: raffstore1.lamelle # Definition des zu ändernden Lamellen-Items
+                se_status_lamella: raffstore1.lamelle.status # Definition des Lamellen Statusitems
+                se_mindelta_lamella: 10 # Alle Aktionen mit Namen lamella sind betroffen
+                Daemmerung:
+                    on_enter:
+                        se_set_height: 100
+                        se_set_lamella: 20
+                    on_leave:
+                        se_set_height: 100
+                        se_set_lamella: 15
+                    on_stay:
+                        se_set_height: 100
+                        se_set_lamella: 20
+                        se_set_lamella: 20
+                        se_mindelta_lamella: 5
+
+**minagedelta: <int>**
+
+.. code-block:: yaml
+
+       se_minagedelta_<Aktionsname>: 300 (Sekunden)|30m (Minuten)
+
+Über das Attribut wird festgelegt, dass eine Aktion nur in einem vorgegebenen Intervall ausgeführt wird.
+Im angegebenen Beispiel wird die Aktion also nur ausgeführt, wenn der letzte Ausführungszeitpunkt mindestens
+300 Sekunden zurück liegt. So kann verhindert werden, dass die Aktion bei jeder Neuevaluierung des Status ausgeführt wird.
+Ein Neustart des Plugins setzt den Counter wieder zurück, der letzte Ausführungszeitpunkt wird also nur bei laufendem
+Betrieb gespeichert und überdauert einen Neustart nicht.
 
 **delay: <int>**
 
@@ -164,11 +206,13 @@ Aktion ausgeführt werden soll. Die Angabe erfolgt in Sekunden oder
 mit dem Suffix "m" in Minuten.
 
 Der Timer zur Ausführung der Aktion nach der angegebenen
-Verzögerung wird entfernt, wenn eine gleichartike Aktion
+Verzögerung wird entfernt, wenn eine gleichartige Aktion
 ausgeführt werden soll (egal ob verzögert oder nicht). Wenn also
 die Verzögerung größer als der ``cycle`` ist, wird die Aktion
-nie durchgeführt werden, es sei denn die Aktion soll nur
-einmalig ausgeführt werden.
+nicht mehr durchgeführt.
+Außerdem ist es möglich, den Timer bewusst abzubrechen, ohne eine Aktion auszuführen,
+indem der Delay auf -1 gesetzt wird. Dies macht insbesondere beim Verlassen von
+Zuständen Sinn, um ungewünschte verzögerte Aktionen vom "alten" Zustand zu verhindern.
 
 **repeat: <bool>**
 

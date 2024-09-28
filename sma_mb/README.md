@@ -1,9 +1,8 @@
-modbuspy mindestens 2.3.0 (getestet, vielleicht geht es ab 1.3.2), ich verwende aktuell 2.5.1
+Auf Grund von Abhängigkeiten der Versionen zu Python, SmartHomeNG usw. pymodbus mindestens mit Version 3.5.2.
 
 sudo pip3 uninstall pymodbus
-sudo pip3 install pymodbus==2.3.0   oder
-sudo pip3 install pymodbus==2.5.1
 
+sudo pip3 install pymodbus>=3.5.2
 
 ###plugin_yaml:
 

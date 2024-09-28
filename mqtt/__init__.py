@@ -5,8 +5,7 @@
 #########################################################################
 #  This file is part of SmartHomeNG.
 #
-#  Sample plugin for new plugins to run with SmartHomeNG version 1.4 and
-#  upwards.
+#  Plugin for MQTT communication, needs mqtt module
 #
 #  SmartHomeNG is free software: you can redistribute it and/or modify
 #  it under the terms of the GNU General Public License as published by
@@ -38,7 +37,7 @@ class Mqtt2(MqttPlugin):
     the update functions for the items
     """
 
-    PLUGIN_VERSION = '2.0.4'
+    PLUGIN_VERSION = '2.0.5'
 
 
     def __init__(self, sh, *args, **kwargs):
@@ -61,15 +60,6 @@ class Mqtt2(MqttPlugin):
 
         # Call init code of parent class (SmartPlugin or MqttPlugin)
         super().__init__()
-
-        # get the parameters for the plugin (as defined in metadata plugin.yaml):
-        try:
-            self.webif_pagelength = self.get_parameter_value('webif_pagelength')
-            pass
-        except KeyError as e:
-            self.logger.critical("Plugin '{}': Inconsistent plugin (invalid metadata definition: {} not defined)".format(self.get_shortname(), e))
-            self._init_complete = False
-            return
 
         # Initialization code goes here
 
@@ -139,11 +129,14 @@ class Mqtt2(MqttPlugin):
 
         # check other mqtt attributes, if a topic attribute has been specified
         if self.has_iattr(item.conf, 'mqtt_topic_in') or self.has_iattr(item.conf, 'mqtt_topic_out'):
-            self.logger.debug("parsing item: {0}".format(item.id()))
+            self.logger.debug("parsing item: {0}".format(item.property.path))
+
+            if item.property.type == 'foo':
+                self.logger.warning(f"item {item.property.path} has item type foo, which will not be processed by the MQTT system")
 
             # check if mqtt module has been initialized successfully
             if not self.mod_mqtt:
-                self.logger.warning("MQTT module is not initialized, not parsing item '{}'".format(item.path()))
+                self.logger.warning("MQTT module is not initialized, not parsing item '{}'".format(item.property.path))
                 return
 
             # checking attribute 'mqtt_qos'
@@ -156,7 +149,7 @@ class Mqtt2(MqttPlugin):
                 if not (qos in [0, 1, 2]):
                     self.logger.warning(
                         self.get_loginstance() + "Item '{}' invalid value specified for mqtt_qos, using plugin's default".format(
-                            item.id()))
+                            item.property.path))
                     qos = self.qos
                 self.set_attr_value(item.conf, 'mqtt_qos', str(qos))
 
@@ -182,7 +175,7 @@ class Mqtt2(MqttPlugin):
             if self.has_iattr(item.conf, 'mqtt_topic_init'):
                 self.inittopics[self.get_iattr_value(item.conf, 'mqtt_topic_init')] = item
             else:
-                self.logger.info("Publishing topic '{}' (when needed) for item '{}'".format(topic, item.id()))
+                self.logger.info("Publishing topic '{}' (when needed) for item '{}'".format(topic, item.property.path))
 
             return self.update_item
 
@@ -213,7 +206,7 @@ class Mqtt2(MqttPlugin):
         if self.alive and caller != self.get_shortname():
             # code to execute if the plugin is not stopped
             # and only, if the item has not been changed by this this plugin:
-            self.logger.info("Update item: {}, item has been changed outside this plugin".format(item.id()))
+            self.logger.info("Update item: {}, item has been changed outside this plugin".format(item.property.path))
 
             if (self.has_iattr(item.conf, 'mqtt_topic_out')):
                 topic = self.get_iattr_value(item.conf, 'mqtt_topic_out')

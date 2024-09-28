@@ -72,6 +72,9 @@ class Viessmann(SmartPlugin):
 
     def __init__(self, sh, *args, standalone='', logger=None, **kwargs):
 
+        # Call init code of parent class (SmartPlugin)
+        super().__init__()
+
         # standalone mode: just setup basic info
         if standalone:
             self._serialport = standalone
@@ -262,7 +265,7 @@ class Viessmann(SmartPlugin):
         :param dest: if given it represents the dest
         '''
         if self.alive and caller != self.get_shortname():
-            self.logger.info(f'Update item: {item.id()}, item has been changed outside this plugin')
+            self.logger.info(f'Update item: {item.property.path}, item has been changed outside this plugin')
             self.logger.debug(f'update_item was called with item {item} from caller {caller}, source {source} and dest {dest}')
 
             if self.has_iattr(item.conf, 'viess_send'):
@@ -1411,8 +1414,9 @@ class Viessmann(SmartPlugin):
         self.logger.debug(f'Response decoded to: commandcode: {commandcode}, responsedatacode: {responsedatacode}, valuebytecount: {valuebytecount}, responsetypecode: {responsetypecode}')
         self.logger.debug(f'Rawdatabytes formatted: {self._bytes2hexstring(rawdatabytes)} and unformatted: {rawdatabytes}')
 
-        # Process response for items if read response and not error
-        if responsedatacode == 1 and responsetypecode != 3:
+        # Process response for items if response and not error
+        # added: only in P300 or if read_response is set, do not try if KW replies with 0x00 (OK)
+        if responsedatacode == 1 and responsetypecode != 3  and (self._protocol == 'P300' or read_response):
 
             # parse response if command config is available
             commandname = self._commandname_by_commandcode(commandcode)

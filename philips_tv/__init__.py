@@ -5,8 +5,7 @@
 #########################################################################
 #  This file is part of SmartHomeNG.   
 #
-#  Sample plugin for new plugins to run with SmartHomeNG version 1.8 and
-#  upwards.
+#  Plugin to connect with Philips SmartTVs
 #
 #  SmartHomeNG is free software: you can redistribute it and/or modify
 #  it under the terms of the GNU General Public License as published by
@@ -25,6 +24,8 @@
 
 from lib.model.smartplugin import *
 from lib.item import Items
+from .webif import WebInterface
+
 import binascii
 import sys
 import requests
@@ -37,11 +38,11 @@ from requests.auth import HTTPDigestAuth
 
 
 class Philips_TV(SmartPlugin):
-    PLUGIN_VERSION = '1.9.1'
+    PLUGIN_VERSION = '1.9.2'
 
-    def __init__(self, sh, *args, **kwargs):
+    def __init__(self, sh):
         """
-        Initalizes the plugin.
+        Initializes the plugin.
 
         """
 
@@ -81,7 +82,7 @@ class Philips_TV(SmartPlugin):
         else:
             self.logger.info(f"Philips TV configured on IP: {self.ip}")
         self.logger.debug("Init completed.")
-        self.init_webinterface()
+        self.init_webinterface(WebInterface)
         self._items = {}
         return 
 
@@ -132,6 +133,48 @@ class Philips_TV(SmartPlugin):
                         body = '{"key": "Standby"}'
                         #self.logger.debug("Sending poweroff command")
                         self.post("input/key", body=body, verbose=self.verbose, err_count=0)
+                elif tx_key == 'AMBILIGHT_STATE':
+                    if item() == False:
+                        body = '{"power": "Off"}'
+                        #self.logger.debug("Sending ambilight off command")
+                        self.post("ambilight/power", body=body, verbose=self.verbose, err_count=0)
+                    else:
+                        body = '{"power": "On"}'
+                        #self.logger.debug("Sending ambilight on command")
+                        self.post("ambilight/power", body=body, verbose=self.verbose, err_count=0)
+                elif tx_key == 'AMBILIGHT_HUE':
+                    # Information: The Philips API expects color to be defined in the HSV (=HSB) space.
+                    # Important: Range for H,S,V in this API is [0-255,0-255,0-255]
+                    
+                    if not isinstance(item(), list):
+                        self.logger.error(f"HSV item {item.property.name} must be of type list. Aborting.")
+                        return
+
+                    if not len(item()) >= 3:
+                        self.logger.error(f"HSV item {item.property.name} must be of type list with three entries (H,S,V). Aborting.")
+                        return
+
+                    hue = item()[0]
+                    saturation = item()[1]
+                    brightness = item()[2]
+                    #self.logger.debug(f"Preparing HSV command from list item with HSV: {hue},{saturation},{brightness}")
+
+                    if (hue is None) or (saturation is None) or (brightness is None):
+                        self.logger.error(f"Cannot find all neccessary list entries for hue command (hue, saturation and brightness). Aborting.")
+                        return
+
+                    # Switch ambilight off for HSV = 0,0,0 with regular off command because API does not switch off via HSV = 0,0,0:
+                    if (hue == 0) and (saturation == 0) and (brightness == 0):
+                        body = '{"power": "Off"}'
+                        self.logger.debug("Sending ambilight off command")
+                        self.post("ambilight/power", body=body, verbose=self.verbose, err_count=0)
+                        return
+
+                    body = {"styleName": "FOLLOW_COLOR", "isExpert": "true", "algorithm": "MANUAL_HUE", "colorSettings": {"color": {"hue": hue,"saturation": saturation,"brightness": brightness},"colorDelta": {"hue": 0,"saturation": 0,"brightness": 0},"speed": 255}}
+                    # convert to JSON string:
+                    bodyJson = json.dumps(body)
+                    #self.logger.debug(f"Sending hue command with body: {bodyJson}")
+                    self.post("ambilight/currentconfiguration", body=bodyJson, verbose=self.verbose, err_count=0)
                 else:
                     self.logger.error(f"Unknown tx key: {tx_key}")
         pass
@@ -139,11 +182,15 @@ class Philips_TV(SmartPlugin):
     def poll_device(self):
         #self.logger.debug("Polling philips device")
 
-        error_msg    = None
-        volume       = None
-        muted        = None 
-        powerstate   = None
-        channel_name = None
+        error_msg       = None
+        volume          = None
+        muted           = None 
+        powerstate      = None
+        channel_name    = None
+        ambilight_state = None           # 'On','Off'
+        hue             = 0              # range 0-255
+        saturation      = 0              # range 0-255
+        brightness      = 0              # range 0-255
 
         value = self.get("audio/volume", verbose=self.verbose, err_count=0, print_response=False)
         #self.logger.debug(f"Response: {value}")
@@ -174,7 +221,7 @@ class Philips_TV(SmartPlugin):
             return
  
         value = self.get("activities/current", verbose=self.verbose, err_count=0, print_response=False)
-        #self.logger.debug(f"Response: {value}")
+        self.logger.debug(f"Response activities/current: {value}")
         value_json = json.loads(value)
         if value_json is not None:
             if 'component' in value_json:
@@ -194,30 +241,25 @@ class Philips_TV(SmartPlugin):
         #        recordingList = value_json["recordings"]
         #        self.logger.debug(f"{len(recordingList)} recordings available")
 
-        #does not work:
-        #value = self.get("activities", verbose=self.verbose, err_count=0, print_response=False)
-        #self.logger.debug(f"Response Activities: {value}")
+        # does not work: TV replies with unknown command
+        # value = self.get("activities", verbose=self.verbose, err_count=0, print_response=False)
+        
+        # does not work: TV replies with unknown command
+        # value = self.get("channeldb/tv/favoritelLists/all", verbose=self.verbose, err_count=0, print_response=False)
 
-
-        # does not work:
-        #value = self.get("channeldb/tv/favoritelLists/all", verbose=self.verbose, err_count=0, print_response=False)
-        #self.logger.debug(f"Response Favorite: {value}")
-
-        # does not work:
-        #value = self.get("channeldb/tv/favoritelLists/all", verbose=self.verbose, err_count=0, print_response=False)
-        #self.logger.debug(f"Response Favorite list: {value}")
-
+        # does not work: TV replies with unknown command
+        # value = self.get("channeldb/tv/favoritelLists/all", verbose=self.verbose, err_count=0, print_response=False)
 
         # works: lists all tv channels:
-        #value = self.get("channeldb/tv/channelLists/all", verbose=self.verbose, err_count=0, print_response=False)
-        #self.logger.debug(f"Response: {value}")
+        # value = self.get("channeldb/tv/channelLists/all", verbose=self.verbose, err_count=0, print_response=False)
+        # self.logger.debug(f"Response: {value}")
 
-        # does not work:
-        #value = self.get("applications/current", verbose=self.verbose, err_count=0, print_response=False)
-        #self.logger.debug(f"Response apps current: {value}".format())
-
-        #does not work
-        #value = self.get("sources/current", verbose=self.verbose, err_count=0, print_response=False)
+        # does not work: TV replies with unknown command
+        # value = self.get("applications/current", verbose=self.verbose, err_count=0, print_response=False)
+        
+        # does not work: TV replies with unknown command
+        # value = self.get("sources/current", verbose=self.verbose, err_count=0, print_response=False)
+        
 
         # works: lists all apps
         #value = self.get("applications", verbose=self.verbose, err_count=0, print_response=False)
@@ -255,6 +297,39 @@ class Philips_TV(SmartPlugin):
                     channel_name = channel_json["name"]
                     #self.logger.debug(f"Channel name is: {channel_name}")
 
+        if not self.alive:
+            return
+
+        # read ambilight status:
+        value = self.get("ambilight/power", verbose=self.verbose, err_count=0, print_response=False)
+        #self.logger.debug(f"Response ambilightstatus: {value}")
+        value_json = json.loads(value)
+        if value_json is not None:
+            if 'power' in value_json:
+                ambilight_state = value_json["power"]
+                #self.logger.debug(f"ambilight_state is: {ambilight_state}")
+
+        if not self.alive:
+            return
+
+        value = self.get("ambilight/currentconfiguration", verbose=self.verbose, err_count=0, print_response=False)
+        #self.logger.debug(f"Response ambilightconfiguration: {value}")
+        value_json = json.loads(value)
+        if value_json is not None:
+            if 'colorSettings' in value_json:
+                colorSettings_json = value_json["colorSettings"]
+                if 'color' in colorSettings_json:
+                    color_json = colorSettings_json["color"]
+                    if 'hue' in color_json:
+                        hue = color_json["hue"]
+                    if 'saturation' in color_json:
+                        saturation = color_json["saturation"]
+                    if 'brightness' in color_json:
+                        brightness = color_json["brightness"]
+                    #self.logger.debug(f"Debug extracted hue: {hue}, {saturation}, {brightness}")
+
+        if not self.alive:
+            return
 
         # copy information into smarthomeNG items:
         for item in self._rx_items:
@@ -270,7 +345,10 @@ class Philips_TV(SmartPlugin):
                 item(str(powerstate), self.get_shortname())
             elif (channel_name is not None) and item.conf['philips_tv_rx_key'].upper() == 'CHANNEL':
                 item(str(channel_name), self.get_shortname())
-
+            elif (ambilight_state is not None) and item.conf['philips_tv_rx_key'].upper() == 'AMBILIGHT_STATE':
+                item(bool(ambilight_state == 'On'), self.get_shortname())
+            elif (brightness is not None) and item.conf['philips_tv_rx_key'].upper() == 'AMBILIGHT_HUE':
+                item([int(hue), int(saturation), int(brightness)], self.get_shortname())
         pass
 
     # creates signature
@@ -422,135 +500,4 @@ class Philips_TV(SmartPlugin):
         else:
             self.logger.info(json.dumps({"error":"Can not reach the API"}))
             return json.dumps({"error":"Can not reach the API"})
-
-    def init_webinterface(self):
-        """"
-        Initialize the web interface for this plugin
-
-        This method is only needed if the plugin is implementing a web interface
-        """
-        try:
-            self.mod_http = Modules.get_instance().get_module(
-                'http')  # try/except to handle running in a core version that does not support modules
-        except:
-            self.mod_http = None
-        if self.mod_http == None:
-            self.logger.error("Not initializing the web interface")
-            return False
-
-        import sys
-        if not "SmartPluginWebIf" in list(sys.modules['lib.model.smartplugin'].__dict__):
-            self.logger.warning("Web interface needs SmartHomeNG v1.5 and up. Not initializing the web interface")
-            return False
-
-        # set application configuration for cherrypy
-        webif_dir = self.path_join(self.get_plugin_dir(), 'webif')
-        config = {
-            '/': {
-                'tools.staticdir.root': webif_dir,
-            },
-            '/static': {
-                'tools.staticdir.on': True,
-                'tools.staticdir.dir': 'static'
-            }
-        }
-
-        # Register the web interface as a cherrypy app
-        self.mod_http.register_webif(WebInterface(webif_dir, self),
-                                     self.get_shortname(),
-                                     config,
-                                     self.get_classname(), self.get_instance_name(),
-                                     description='')
-
-        return True
-
-
-# ------------------------------------------
-#    Webinterface of the plugin
-# ------------------------------------------
-
-import cherrypy
-from jinja2 import Environment, FileSystemLoader
-
-
-class WebInterface(SmartPluginWebIf):
-
-    def __init__(self, webif_dir, plugin):
-        """
-        Initialization of instance of class WebInterface
-
-        :param webif_dir: directory where the webinterface of the plugin resides
-        :param plugin: instance of the plugin
-        :type webif_dir: str
-        :type plugin: object
-        """
-        self.logger = logging.getLogger(__name__)
-        self.webif_dir = webif_dir
-        self.plugin = plugin
-        self.tplenv = self.init_template_environment()
-
-        self.items = Items.get_instance()
-
-    @cherrypy.expose
-    def index(self, reload=None, action=None, email=None, hashInput=None, code=None, tokenInput=None):
-        """
-        Build index.html for cherrypy
-
-        Render the template and return the html file to be delivered to the browser
-
-        :return: contents of the template after beeing rendered
-        """
-        
-        codeRequestSuccessfull = None
-        pairingCompleted = None
-
-        if action is not None:
-            if action == "requestCode":
-                self.logger.info("Request code triggered via webinterface")
-                codeRequestSuccessfull = self.plugin.startPairing()
-            elif action == "confirmCode":
-                self.logger.info("Confirm code triggered via webinterface")
-                if (code is not None) and (not code == ''):
-                    pairingCompleted = self.plugin.completePairing(code)
-                elif (code is None) or (code == ''):
-                    self.logger.error("Confirmation not possible: TV Paring code missing.")
-                    pairingCompleted = False
-                else:
-                    self.logger.error("Confirmation no possible: Missing argument.")
-                    pairingCompleted = False
-            else:
-                self.logger.error("Unknown command received via webinterface")
-
-        tmpl = self.tplenv.get_template('index.html')
-        # add values to be passed to the Jinja2 template eg: tmpl.render(p=self.plugin, interface=interface, ...)
-        return tmpl.render(p=self.plugin, 
-                           codeRequestSuccessfull=codeRequestSuccessfull,
-                           pairingCompleted=pairingCompleted)
-
-
-    @cherrypy.expose
-    def get_data_html(self, dataSet=None):
-        """
-        Return data to update the webpage
-
-        For the standard update mechanism of the web interface, the dataSet to return the data for is None
-
-        :param dataSet: Dataset for which the data should be returned (standard: None)
-        :return: dict with the data needed to update the web page.
-        """
-        if dataSet is None:
-            # get the new data
-            data = {}
-
-            # data['item'] = {}
-            # for i in self.plugin.items:
-            #     data['item'][i]['value'] = self.plugin.getitemvalue(i)
-            #
-            # return it as json the the web page
-            # try:
-            #     return json.dumps(data)
-            # except Exception as e:
-            #     self.logger.error(f"get_data_html exception: {e}")
-        return {}
-
 

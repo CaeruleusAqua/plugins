@@ -9,7 +9,7 @@ For support, questions and bug reports, please refer to [KNX-User-Forum](https:/
 - an Harmony Hub device
 - SmarthomeNG version >= 1.3
 - Python3 module <b>sleekxmpp</b>
-- (optional) create a dummy Harmony Hub activity, [see remarks](#dummy)
+- (optional) create a dummy Harmony Hub activity, see remarks
 
 ```
 sudo pip3 install sleekxmpp
@@ -103,8 +103,7 @@ for a Harmony Hub activity the activity id.
 
 ```yaml
     harmony:
-        class_name: Harmony
-        class_path: plugins.harmony
+        plugin_name: harmony
         harmony_ip: 192.168.178.78
         #harmony_port: 5222 # [default: 5222, int]
         #sleekxmpp_debug: false  #[default:false, bool]

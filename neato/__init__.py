@@ -5,9 +5,6 @@
 #########################################################################
 #  This file is part of SmartHomeNG.   
 #
-#  Sample plugin for new plugins to run with SmartHomeNG version 1.4 and
-#  upwards.
-#
 #  SmartHomeNG is free software: you can redistribute it and/or modify
 #  it under the terms of the GNU General Public License as published by
 #  the Free Software Foundation, either version 3 of the License, or
@@ -25,6 +22,7 @@
 
 from lib.model.smartplugin import *
 from lib.item import Items
+from .webif import WebInterface
 import binascii
 import json
 
@@ -32,10 +30,10 @@ from .robot import Robot
 
 
 class Neato(SmartPlugin):
-    PLUGIN_VERSION = '1.6.8'
+    PLUGIN_VERSION = '1.6.9'
     robot = 'None'
 
-    def __init__(self, sh, *args, **kwargs):
+    def __init__(self, sh):
         """
         Initalizes the plugin.
 
@@ -48,12 +46,15 @@ class Neato(SmartPlugin):
         self._sh = sh
         self._cycle = 60
         self.logger.debug("Init completed.")
-        self.init_webinterface()
+        self.init_webinterface(WebInterface)
         self._items = {}
         return
 
     def numberRobots(self):
         return self.robot.numberRobots()
+
+    def backendOnline(self):
+        return self.robot._backendOnline
 
     def accountEmail(self):
         return self.get_parameter_value("account_email")
@@ -63,7 +64,6 @@ class Neato(SmartPlugin):
 
     def setClientIDHash(self, hash):
         return self.robot.setClientIDHash(hash)
-
 
     def run(self):
         self.logger.debug("Run method called")
@@ -142,6 +142,9 @@ class Neato(SmartPlugin):
         response = self.robot.robot_command("start", boundary_id, map_id)
         return self.check_command_response(response)
 
+    def get_known_mapId(self):
+        self.logger.info(f"MapID is {self.robot.mapId}")
+        return self.robot.mapId
 
     # returns boundaryIds (clean zones) for given mapID
     # returns True on success and False otherwise
@@ -152,7 +155,6 @@ class Neato(SmartPlugin):
     def dismiss_current_alert(self):
         response = self.robot.robot_command("dismiss_current_alert")
         return self.check_command_response(response)
-
 
     # enable cleaning schedule
     # returns True on success and False otherwise
@@ -211,6 +213,8 @@ class Neato(SmartPlugin):
                 value = self.robot.dockHasBeenSeen
             elif attribute == 'command_startAvailable':
                 value = self.robot.commandStartAvailable
+            elif attribute == 'online_status':
+                value = self.robot._backendOnline
 
             # if a value was found, store it to item
             if value is not None:
@@ -285,168 +289,5 @@ class Neato(SmartPlugin):
         token = self.robot.request_oauth2_token(code, hash)
         return token
 
-
-
-    def init_webinterface(self):
-        """"
-        Initialize the web interface for this plugin
-
-        This method is only needed if the plugin is implementing a web interface
-        """
-        try:
-            self.mod_http = Modules.get_instance().get_module(
-                'http')  # try/except to handle running in a core version that does not support modules
-        except:
-            self.mod_http = None
-        if self.mod_http == None:
-            self.logger.error("Not initializing the web interface")
-            return False
-
-        import sys
-        if not "SmartPluginWebIf" in list(sys.modules['lib.model.smartplugin'].__dict__):
-            self.logger.warning("Web interface needs SmartHomeNG v1.5 and up. Not initializing the web interface")
-            return False
-
-        # set application configuration for cherrypy
-        webif_dir = self.path_join(self.get_plugin_dir(), 'webif')
-        config = {
-            '/': {
-                'tools.staticdir.root': webif_dir,
-            },
-            '/static': {
-                'tools.staticdir.on': True,
-                'tools.staticdir.dir': 'static'
-            }
-        }
-
-        # Register the web interface as a cherrypy app
-        self.mod_http.register_webif(WebInterface(webif_dir, self),
-                                     self.get_shortname(),
-                                     config,
-                                     self.get_classname(), self.get_instance_name(),
-                                     description='')
-
-        return True
-
-
-# ------------------------------------------
-#    Webinterface of the plugin
-# ------------------------------------------
-
-import cherrypy
-from jinja2 import Environment, FileSystemLoader
-
-
-class WebInterface(SmartPluginWebIf):
-
-    def __init__(self, webif_dir, plugin):
-        """
-        Initialization of instance of class WebInterface
-
-        :param webif_dir: directory where the webinterface of the plugin resides
-        :param plugin: instance of the plugin
-        :type webif_dir: str
-        :type plugin: object
-        """
-        self.logger = logging.getLogger(__name__)
-        self.webif_dir = webif_dir
-        self.plugin = plugin
-        self.tplenv = self.init_template_environment()
-
-        self.items = Items.get_instance()
-
-    @cherrypy.expose
-    def index(self, reload=None, action=None, email=None, hashInput=None, code=None, tokenInput=None, mapIDInput=None):
-        """
-        Build index.html for cherrypy
-
-        Render the template and return the html file to be delivered to the browser
-
-        :return: contents of the template after beeing rendered
-        """
-        calculatedHash = ''
-        codeRequestSuccessfull  = None
-        token = ''
-        configWriteSuccessfull  = None
-        resetAlarmsSuccessfull  = None
-        boundaryListSuccessfull = None
-
-
-
-        if action is not None:
-            if action == "generateHash":
-                ret = self.plugin.generateRandomHash()
-                calculatedHash = str(ret)
-                self.logger.info("Generate hash triggered via webinterface: {0}".format(calculatedHash))
-            elif action == "requestCode" and (email is not None) and (hashInput is not None):
-                self.logger.warning("Request Vorwerk code triggered via webinterface (Email:{0} hashInput:{1})".format(email, hashInput))
-                codeRequestSuccessfull = self.plugin.request_oauth2_code(str(hashInput))
-            elif action == "requestCode":
-                if email is None:
-                    self.logger.error("Cannot request Vorwerk code as email is empty: {0}.".format(str(email)))
-                elif hash is None:
-                    self.logger.error("Cannot request Vorwerk code as hash is empty: {0}.".format(str(email)))
-            elif action == "requestToken":
-                self.logger.info("Request Vorwerk token triggered via webinterface")
-                if (email is not None) and (hashInput is not None) and (code is not None) and (not code == '') :
-                    token = self.plugin.request_oauth2_token(str(code), str(hashInput))
-                elif (code is None) or (code == ''):
-                    self.logger.error("Request Vorwerk token: Email validation code missing.")
-                else:
-                    self.logger.error("Request Vorwerk token: Missing argument.")
-            elif action =="writeToPluginConfig":
-                if (tokenInput is not None) and (not tokenInput == ''):
-                    self.logger.warning("Writing token to plugin.yaml")
-                    param_dict = {"token": str(tokenInput)}
-                    self.plugin.update_config_section(param_dict)
-                    configWriteSuccessfull = True
-                else:
-                    self.logger.error("writeToPluginConfig: Missing argument.")
-                    configWriteSuccessfull = False
-            elif action =="clearAlarms":
-                    self.logger.warning("Resetting alarms via webinterface")
-                    self.plugin.dismiss_current_alert()
-                    resetAlarmsSuccessfull = True
-            elif action =="listAvailableMaps":
-                    self.logger.warning("List all available maps via webinterface")
-                    boundaryListSuccessfull = self.plugin.get_map_boundaries(map_id=mapIDInput)
-            else:
-                self.logger.error("Unknown command received via webinterface")
-
-        tmpl = self.tplenv.get_template('index.html')
-        # add values to be passed to the Jinja2 template eg: tmpl.render(p=self.plugin, interface=interface, ...)
-        return tmpl.render(p=self.plugin, calculatedHash=calculatedHash,
-                           token=token,
-                           codeRequestSuccessfull=codeRequestSuccessfull,
-                           configWriteSuccessfull=configWriteSuccessfull,
-                           resetAlarmsSuccessfull=resetAlarmsSuccessfull,
-                           boundaryListSuccessfull=boundaryListSuccessfull,
-                           items=sorted(self.items.return_items(), key=lambda k: str.lower(k['_path'])))
-
-
-    @cherrypy.expose
-    def get_data_html(self, dataSet=None):
-        """
-        Return data to update the webpage
-
-        For the standard update mechanism of the web interface, the dataSet to return the data for is None
-
-        :param dataSet: Dataset for which the data should be returned (standard: None)
-        :return: dict with the data needed to update the web page.
-        """
-        if dataSet is None:
-            # get the new data
-            data = {}
-
-            # data['item'] = {}
-            # for i in self.plugin.items:
-            #     data['item'][i]['value'] = self.plugin.getitemvalue(i)
-            #
-            # return it as json the the web page
-            # try:
-            #     return json.dumps(data)
-            # except Exception as e:
-            #     self.logger.error("get_data_html exception: {}".format(e))
-        return {}
 
 

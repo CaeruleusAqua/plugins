@@ -1,0 +1,764 @@
+# Metadata for the Smart-Plugin
+plugin:
+    # Global plugin attributes
+    type: web                      # plugin type (gateway, interface, protocol, system, web)
+    description:
+        de: 'Wetterdaten über pirateweather.net.'
+        en: 'Weather data via pirateweather.net.'
+    maintainer: msinn
+    tester: aschwith
+    state: ready
+    keywords: weather sun wind rain precipitation
+    #documentation: ''
+    support: 'https://knx-user-forum.de/forum/supportforen/smarthome-py/1852685'
+    version: 1.2.5                # Plugin version
+    sh_minversion: '1.9.5.4'        # minimum shNG version to use this plugin
+    #sh_maxversion:               # maximum shNG version to use this plugin (leave empty if latest)
+    multi_instance: True          # plugin supports multi instance
+    restartable: True
+    classname: PirateWeather      # class containing the plugin
+
+parameters:
+    # Definition of parameters to be configured in etc/plugin.yaml
+    key:
+        type: str
+        mandatory: True
+        description:
+            de: 'Persönlicher API Key für pirateweather.net. Registrierung unter https://pirateweather.net/.'
+            en: 'Your own personal API key for pirateweather.net. For your own key register to https://pirateweather.net/.'
+    latitude:
+        type: num
+        mandatory: False
+        default: 0
+        description:
+            de: 'Latitude des Ortes, für den die Wetterdaten abgerufen werden sollen. Default: SmartHomeNG Settings'
+            en: 'Latitude for the location, of which weather data is requested. Default: SmartHomeNG Settings'
+    longitude:
+        type: num
+        mandatory: False
+        default: 0
+        description:
+            de: 'Longitude des Ortes, für den die Wetterdaten abgerufen werden sollen. Default: SmartHomeNG Settings.'
+            en: 'Longitude for the location, of which weather data is requested. Default: SmartHomeNG Settings.'
+    lang:
+        type: str
+        mandatory: False
+        default: 'de'
+        description:
+            de: 'Sprache der zurückgelieferten Daten. Mögliche Werte siehe https://pirateweather.net/.'
+            en: 'Language of the data to be returned. Possible values see https://pirateweather.net/.'
+    units:
+        type: str
+        mandatory: False
+        default: 'ca'
+        description:
+            de: 'Einheit der zurückgelieferten Daten. Mögliche Werte siehe https://pirateweather.net/. Default: "ca".'
+            en: 'Unit of the returned data. Possible values see https://pirateweather.net/. Default: "ca".'
+    cycle:
+        type: int
+        mandatory: False
+        default: 900
+        description:
+            de: '(optional) Zeit zwischen zwei Updateläufen. Default ist 900 Sekunden.'
+            en: '(optional) Time period between two update cycles. Default is 900 seconds.'
+
+
+
+item_attributes:
+    # Definition of item attributes defined by this plugin
+    pw_matchstring:
+        type: str
+        mandatory: True
+        description:
+            de: 'Matchstring basierend auf der Response des "Forecast Request" aus https://pirateweather.net/ (Example Request), bspw. "currently/temperature". Ausnahmen: Im Fall von "alerts" wird ein Item vom Typ "list" benötigt, der Wert "alerts_string" schreibt die Alerts-Liste in einen HTML String. Das Array in "flags/sources" wird in ein "str" Item gemerged.'
+            en: 'Matchstring according to the response of the "forecast request" described in https://pirateweather.net/ (Example Request), e.g. "currently/temperature". Exceptions: In case of "alerts" an item of type "list" will be filled with raw data, the value "alerts_string" creates a html string with alerts data. The array "flags/sources" will be merged to a string.'
+
+item_structs:
+    weather:
+        name: Complete weather report from pirateweather.net - Current weather and forecasts are written to database
+
+        locals:
+            lat:
+                type: num
+                pw_matchstring@instance: latitude
+            lon:
+                type: num
+                pw_matchstring@instance: longitude
+            timezone:
+                type: str
+                pw_matchstring@instance: timezone
+            location:
+                type: str
+                eval_trigger:
+                  - ..lon
+                eval: env.location_name(sh...lat(), sh...lon()) if (sh...lat()!=0 and sh...lon()!=0) else env.location_name(sh.lat, sh.lon)
+
+        struct:
+            - .current_weather
+            - .forecast_hourly
+            - .forecast_daily
+
+        minutely:
+            summary:
+                type: str
+                pw_matchstring@instance: minutely/summary
+            icon:
+                type: str
+                pw_matchstring@instance: minutely/icon
+            icon_visu:
+                type: str
+                pw_matchstring@instance: minutely/icon_visu
+
+        alerts:
+            list:
+                type: list
+                pw_matchstring@instance: alerts
+            string_detail:
+                type: str
+                pw_matchstring@instance: alerts_string
+
+        flags:
+            sources:
+                type: str
+                pw_matchstring@instance: flags/sources
+            units:
+                type: str
+                pw_matchstring@instance: flags/units
+            nearest_station:
+                type: num
+                pw_matchstring@instance: flags/nearest-station
+
+
+    current_weather:
+        name: Current weather of Weather report from pirateweather.net - By default, data is not written to database
+        my_database_currently: no
+        my_database_maxage: 92
+
+        currently:
+            my_database: ..:my_database_currently
+            my_database_maxage: ..:.
+
+            time_epoch:
+                type: num
+                pw_matchstring@instance: currently/time
+
+            time:
+                type: str
+                eval_trigger: ..time_epoch
+                eval: datetime.datetime.fromtimestamp(sh...time_epoch()).strftime('%HH:%MM')
+
+            weekday:
+                type: str
+                pw_matchstring@instance: currently/weekday
+
+            summary:
+                type: str
+                pw_matchstring@instance: currently/summary
+
+            icon:
+                type: str
+                pw_matchstring@instance: currently/icon
+
+            icon_visu:
+                type: str
+                pw_matchstring@instance: currently/icon_visu
+
+            nearestStormDistance:
+                type: num
+                pw_matchstring@instance: currently/nearestStormDistance
+
+            precipIntensity:
+                type: num
+                pw_matchstring@instance: currently/precipIntensity
+                database: ..:my_database
+                database_maxage: ..:my_database_maxage
+
+            precipIntensityError:
+                type: num
+                pw_matchstring@instance: currently/precipIntensityError
+
+            precipProbability:
+                type: num
+                pw_matchstring@instance: currently/precipProbability
+                database: ..:my_database
+                database_maxage: ..:my_database_maxage
+
+            precipType:
+                type: str
+                pw_matchstring@instance: currently/precipType
+
+            temperature:
+                type: num
+                pw_matchstring@instance: currently/temperature
+                database: ..:my_database
+                database_maxage: ..:my_database_maxage
+
+            apparenttemperature:
+                type: num
+                pw_matchstring@instance: currently/apparentTemperature
+                database: ..:my_database
+                database_maxage: ..:my_database_maxage
+
+            dewpoint:
+                type: num
+                pw_matchstring@instance: currently/dewPoint
+                database: ..:my_database
+                database_maxage: ..:my_database_maxage
+
+            humidity:
+                type: num
+                pw_matchstring@instance: currently/humidity
+                database: ..:my_database
+                database_maxage: ..:my_database_maxage
+
+            pressure:
+                type: num
+                pw_matchstring@instance: currently/pressure
+                database: ..:my_database
+                database_maxage: ..:my_database_maxage
+
+            windSpeed:
+                struct: ._windSpeedStruct
+                pw_matchstring@instance: currently/windSpeed
+
+            windGust:
+                struct: ._windSpeedStruct
+                pw_matchstring@instance: currently/windGust
+
+            windBearing:
+                struct: ._windBearingStruct
+                pw_matchstring@instance: currently/windBearing
+
+            cloudCover:
+                type: num
+                pw_matchstring@instance: currently/cloudCover
+                database: ..:my_database
+                database_maxage: ..:my_database_maxage
+
+            uvIndex:
+                type: num
+                pw_matchstring@instance: currently/uvIndex
+                database: ..:my_database
+                database_maxage: ..:my_database_maxage
+
+            visibility:
+                type: num
+                pw_matchstring@instance: currently/visibility
+                database: ..:my_database
+                database_maxage: ..:my_database_maxage
+
+            ozone:
+                type: num
+                pw_matchstring@instance: currently/ozone
+                database: ..:my_database
+                database_maxage: ..:my_database_maxage
+
+            date:
+                type: str
+                pw_matchstring@instance: currently/date
+                database: ..:my_database
+                database_maxage: ..:my_database_maxage
+
+            day:
+                type: num
+                pw_matchstring@instance: currently/day
+                database: ..:my_database
+                database_maxage: ..:my_database_maxage
+
+    forecast_hourly:
+        name: Hourly forcast of Weather report from pirateweather.net - By default, data is not written to database
+        my_database_hourly: no
+        my_database_maxage: 92
+
+        hourly:
+            my_database: ..:my_database_hourly
+            my_database_maxage: ..:.
+
+            summary:
+                type: str
+                pw_matchstring@instance: hourly/summary
+            icon:
+                type: str
+                pw_matchstring@instance: hourly/icon
+            icon_visu:
+                type: str
+                pw_matchstring@instance: hourly/icon_visu
+
+            hour0:
+                _hour: hour0
+                struct: ._hourStruct
+            hour1:
+                _hour: hour1
+                struct: ._hourStruct
+            hour2:
+                _hour: hour2
+                struct: ._hourStruct
+            hour3:
+                _hour: hour3
+                struct: ._hourStruct
+            hour4:
+                _hour: hour4
+                struct: ._hourStruct
+            hour5:
+                _hour: hour5
+                struct: ._hourStruct
+            hour6:
+                _hour: hour6
+                struct: ._hourStruct
+            hour7:
+                _hour: hour7
+                struct: ._hourStruct
+            hour8:
+                _hour: hour8
+                struct: ._hourStruct
+            hour9:
+                _hour: hour9
+                struct: ._hourStruct
+            hour10:
+                _hour: hour10
+                struct: ._hourStruct
+            hour11:
+                _hour: hour11
+                struct: ._hourStruct
+            hour12:
+                _hour: hour12
+                struct: ._hourStruct
+
+    forecast_daily:
+        name: Daily forcast of Weather report from pirateweather.net - By default, data is not written to database
+        my_database_daily: no
+        my_database_maxage: 92
+
+        daily:
+            my_database: ..:my_database_daily
+            my_database_maxage: ..:.
+
+            summary:
+                type: str
+                pw_matchstring@instance: daily/summary
+            icon:
+                type: str
+                pw_matchstring@instance: daily/icon
+            icon_visu:
+                type: str
+                pw_matchstring@instance: daily/icon_visu
+
+            day0:
+                _day: day0
+                struct: ._dayStruct
+            day1:
+                _day: day1
+                struct: ._dayStruct
+            day2:
+                _day: day2
+                struct: ._dayStruct
+            day3:
+                _day: day3
+                struct: ._dayStruct
+            day4:
+                _day: day4
+                struct: ._dayStruct
+            day5:
+                _day: day5
+                struct: ._dayStruct
+            day6:
+                _day: day6
+                struct: ._dayStruct
+            day7:
+                _day: day7
+                struct: ._dayStruct
+
+# ---------------------------------------
+
+    _hourStruct:
+        #_hour: hour0
+        my_database: ..:.
+        my_database_maxage: ..:.
+
+        time_epoch:
+            type: num
+            pw_matchstring_@instance: "hourly/{..:_hour}/time"
+
+        time:
+            type: str
+            eval_trigger: ..time_epoch
+            eval: datetime.datetime.fromtimestamp(sh...time_epoch()).strftime('%d. %b %Y %H:%M')
+
+        summary:
+            type: str
+            pw_matchstring_@instance: "hourly/{..:_hour}/summary"
+
+        icon:
+            type: str
+            pw_matchstring_@instance: "hourly/{..:_hour}/icon"
+
+        icon_visu:
+            type: str
+            pw_matchstring_@instance: "hourly/{..:_hour}/icon_visu"
+
+        nearestStormDistance:
+            type: num
+            pw_matchstring_@instance: "hourly/{..:_hour}/nearestStormDistance"
+
+        precipIntensity:
+            type: num
+            pw_matchstring_@instance: "hourly/{..:_hour}/precipIntensity"
+            database: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        precipIntensityError:
+            type: num
+            pw_matchstring_@instance: "hourly/{..:_hour}/precipIntensityError"
+
+        precipProbability:
+            type: num
+            pw_matchstring_@instance: "hourly/{..:_hour}/precipProbability"
+            database: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        precipType:
+            type: str
+            pw_matchstring_@instance: "hourly/{..:_hour}/precipType"
+
+        temperature:
+            type: num
+            pw_matchstring_@instance: "hourly/{..:_hour}/temperature"
+            database: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        apparenttemperature:
+            type: num
+            pw_matchstring_@instance: "hourly/{..:_hour}/apparentTemperature"
+            database: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        dewpoint:
+            type: num
+            pw_matchstring_@instance: "hourly/{..:_hour}/dewPoint"
+            database: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        humidity:
+            type: num
+            pw_matchstring_@instance: "hourly/{..:_hour}/humidity"
+            database: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        pressure:
+            type: num
+            pw_matchstring_@instance: "hourly/{..:_hour}/pressure"
+            database: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        windSpeed:
+            type: num
+            pw_matchstring_@instance: "hourly/{..:_hour}/windSpeed"
+            database: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        windGust:
+            type: num
+            pw_matchstring_@instance: "hourly/{..:_hour}/windGust"
+            database: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        windBearing:
+            type: num
+            pw_matchstring_@instance: "hourly/{..:_hour}/windBearing"
+            database: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        cloudCover:
+            type: num
+            pw_matchstring_@instance: "hourly/{..:_hour}/cloudCover"
+            database: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        uvIndex:
+            type: num
+            pw_matchstring_@instance: "hourly/{..:_hour}/uvIndex"
+            database: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        visibility:
+            type: num
+            pw_matchstring_@instance: "hourly/{..:_hour}/visibility"
+            database: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        ozone:
+            type: num
+            pw_matchstring_@instance: "hourly/{..:_hour}/ozone"
+            database: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        date:
+            type: str
+            pw_matchstring_@instance: "hourly/{..:_hour}/date"
+            database: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        weekday:
+            type: str
+            pw_matchstring_@instance: "hourly/{..:_hour}/weekday"
+            database: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+    _dayStruct:
+        #_day: day0
+        my_database: ..:.
+        my_database_maxage: ..:.
+
+        time_epoch:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/time"
+
+        time:
+            type: str
+            eval_trigger: ..time_epoch
+            eval: datetime.datetime.fromtimestamp(sh...time_epoch()).strftime('%d. %b %Y %H:%M')
+
+        summary:
+            type: str
+            pw_matchstring_@instance: "daily/{..:_day}/summary"
+
+        icon:
+            type: str
+            pw_matchstring_@instance: "daily/{..:_day}/icon"
+
+        icon_visu:
+            type: str
+            pw_matchstring_@instance: "daily/{..:_day}/icon_visu"
+
+        nearestStormDistance:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/nearestStormDistance"
+
+        precipIntensity:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/precipIntensity"
+            database: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        precipIntensityError:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/precipIntensityError"
+
+        precipProbability:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/precipProbability"
+            database: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        precipType:
+            type: str
+            pw_matchstring_@instance: "daily/{..:_day}/precipType"
+
+        temperature:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/temperature"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        apparenttemperature:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/apparentTemperature"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        dewpoint:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/dewPoint"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        humidity:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/humidity"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        pressure:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/pressure"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        windSpeed:
+            struct: ._windSpeedStruct
+            pw_matchstring_@instance: "daily/{..:_day}/windSpeed"
+
+        windGust:
+            struct: ._windSpeedStruct
+            pw_matchstring_@instance: "daily/{..:_day}/windGust"
+
+        windBearing:
+            struct: ._windBearingStruct
+            pw_matchstring_@instance: "daily/{..:_day}/windBearing"
+
+        cloudCover:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/cloudCover"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        uvIndex:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/uvIndex"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        rain:
+            name: Precipitation volume, mm
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/precipAccumulation"
+
+        snow:
+            name: (where available) Snow volume, mm
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/snow"
+
+        visibility:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/visibility"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        ozone:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/ozone"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        temperatureMin:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/temperatureMin"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        temperatureMinTime:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/temperatureMinTime"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        temperatureMax:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/temperatureMax"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        temperatureMaxTime:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/temperatureMaxTime"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        apparentTemperatureMin:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/apparentTemperatureMin"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        apparentTemperatureMinTime:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/apparentTemperatureMinTime"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        apparentTemperatureMax:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/apparentTemperatureMax"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        apparentTemperatureMaxTime:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/apparentTemperatureMaxTime"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        date:
+            type: str
+            pw_matchstring_@instance: "daily/{..:_day}/date"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        weekday:
+            type: str
+            pw_matchstring_@instance: "daily/{..:_day}/weekday"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        precipProbability_mean:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/precipProbability_mean"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        precipIntensity_mean:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/precipIntensity_mean"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        temperature_mean:
+            type: num
+            pw_matchstring_@instance: "daily/{..:_day}/temperature_mean"
+            database@instance: ..:my_database
+            database_maxage@instance: ..:my_database_maxage
+
+        hours:
+            type: dict
+            pw_matchstring_@instance: "daily/{..:_day}/hours"
+
+    _windSpeedStruct:
+        type: num
+        #pw_matchstring@instance: currently/windGust
+        database@instance: ..:my_database
+        database_maxage@instance: ..:my_database_maxage
+
+        beaufortNr:
+            name: Wind speed as beaufort number
+            type: num
+            eval: env.kmh_to_bft(sh...())
+            eval_trigger: ..
+
+        beaufortString:
+            name: Wind speed as beaufort description
+            type: str
+            eval: env.bft_to_text( sh...beaufortNr() )
+            eval_trigger: ..
+
+    _windBearingStruct:
+        type: num
+        #pw_matchstring@instance: currently/windBearing
+        database@instance: ..:my_database
+        database_maxage@instance: ..:my_database_maxage
+
+        windDirectionString:
+            type: str
+            eval_trigger: ..
+            eval: env.degrees_to_direction_16(sh...())
+
+
+# ---------------------------------------
+
+logic_parameters: NONE
+    # Definition of logic parameters defined by this plugin
+
+plugin_functions:
+    # Definition of function interface of the plugin
+
+    map_icon:
+        type: str
+        description:
+            de: "Gibt das SmartVisu Icon zum übergebenen Pirate-Weather Icon zurück."
+            en: "Returns the SmartVisu icon to the provided Pirate-Weather icon."
+        parameters:
+            icon:
+                type: str
+                description:
+                    de: "Icon als String."
+                    en: "Icon as string."
+

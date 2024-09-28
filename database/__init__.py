@@ -25,6 +25,7 @@
 
 import copy
 import re
+import os
 import datetime
 import functools
 import time
@@ -50,7 +51,7 @@ class Database(SmartPlugin):
     """
 
     ALLOW_MULTIINSTANCE = True
-    PLUGIN_VERSION = '1.6.8'
+    PLUGIN_VERSION = '1.6.12'
 
     # SQL queries: {item} = item table name, {log} = log table name
     # time, item_id, val_str, val_num, val_bool, changed
@@ -108,7 +109,6 @@ class Database(SmartPlugin):
         self._copy_database = self.get_parameter_value('copy_database')
         self._copy_database_name = self.get_parameter_value('copy_database_name')
 
-        self.webif_pagelength = self.get_parameter_value('webif_pagelength')
         self._webdata = {}
 
         self._replace = {table: table if self._prefix == "" else self._prefix + table for table in ["log", "item"]}
@@ -135,7 +135,8 @@ class Database(SmartPlugin):
 
         self.cleanup_active = False
 
-        self.last_connect_time  = 0     # mechanism for limiting db connection requests
+        self.last_connect_time  = 0             # mechanism for limiting db connection requests
+        self.last_maint_connect_time  = 0       # mechanism for limiting db maintenance connection requests
 
         # Copy SQLite3 database file (if configured)
         if self._copy_database:
@@ -149,12 +150,22 @@ class Database(SmartPlugin):
             self._init_complete = False
             return
 
+        # Setup db maintenance connection and test if connection is possible
+        self._db_maint = lib.db.Database(("" if self._prefix == ""  else self._prefix.capitalize()) + "Database", self.driver, self._connect)
+        if self._db_maint.api_initialized == False:
+            # Error initializeng the database driver (e.g.: Python module for database driver not found)
+            self.logger.error("Initialization of database API failed for maintenance connection")
+            self._init_complete = False
+            return
+
         self._db_initialized = False
+        self._db_maint_initialized = False
         if not self._initialize_db():
             #self._init_complete = False
             #return
             self.logger.debug("Init: DB could not be initialized")
             pass
+
 
         self.init_webinterface(WebInterface)
         return
@@ -180,6 +191,7 @@ class Database(SmartPlugin):
         self._stop_schedulers()
         self._dump(True)
         self._db.close()
+        self._db_maint.close()
 
 
     def parse_item(self, item):
@@ -196,27 +208,27 @@ class Database(SmartPlugin):
                         can be sent to the knx with a knx write function within the knx plugin.
         """
         if self.has_iattr(item.conf, 'database'):
-            self._webdata.update({item.id(): {}})
+            self._webdata.update({item.property.path: {}})
             self._handled_items.append(item)
             if self.has_iattr(item.conf, 'database_maxage'):
                 maxage = self.get_iattr_value(item.conf, 'database_maxage')
                 if float(maxage) > 0:
                     #if self.get_iattr_value(item.conf, 'database') == 'init':
-                    #    self.logger.warning(f"Item {item.id()} configured with database_maxage and init could lead to no values in DB for initialization.")
+                    #    self.logger.warning(f"Item {item.property.path} configured with database_maxage and init could lead to no values in DB for initialization.")
 
                     self._items_with_maxage.append(item)
 
             self.logger.debug(item.conf)
             self._buffer_insert(item, [])
-            item.series = functools.partial(self._series, item=item.id())  # Zur Nutzung im Websocket Plugin
-            item.db = functools.partial(self._single, item=item.id())      # Nie genutzt??? -> Doch
+            item.series = functools.partial(self._series, item=item.property.path)  # Zur Nutzung im Websocket Plugin
+            item.db = functools.partial(self._single, item=item.property.path)      # Zur Nutzung ueber Funktionen in Logiken
             item.dbplugin = self                                           # genutzt zum Zugriff auf die Plugin Instanz z.B. durch Logiken
             if self._db_initialized and self.get_iattr_value(item.conf, 'database').lower() == 'init':
                 if not self._db.lock(5):
-                    self.logger.error("Can not acquire lock for database to read value for item {}".format(item.id()))
+                    self.logger.error("Can not acquire lock for database to read value for item {}".format(item.property.path))
                     return
                 cur = self._db.cursor()
-                cache = self.readItem(str(item.id()), cur=cur)
+                cache = self.readItem(str(item.property.path), cur=cur)
                 if cache is not None:
                     try:
                         value = self._item_value_tuple_rev(item.type(), cache[COL_ITEM_VAL_STR:COL_ITEM_VAL_BOOL + 1])
@@ -225,28 +237,28 @@ class Database(SmartPlugin):
                                                      {'id': cache[COL_ITEM_ID]}, cur=cur)
                         if (value is not None) and (prev_change is not None) and (prev_change[0] is not None):
                             # Add item specific debugging here:
-                            #if item.id() == 'xyz':
-                            #    self.logger.debug(f"Parse item: ItemID: {item.id()}: {value}, {self._datetime(prev_change[0])}, {last_change}")
-                            self._webdata[item.id()].update({'last_change': last_change.isoformat()})
-                            self._webdata[item.id()].update({'value': value})
-                            self._webdata[item.id()].update({'type': item.property.type})
+                            #if item.property.path == 'xyz':
+                            #    self.logger.debug(f"Parse item: ItemID: {item.property.path}: {value}, {self._datetime(prev_change[0])}, {last_change}")
+                            self._webdata[item.property.path].update({'last_change': last_change.isoformat()})
+                            self._webdata[item.property.path].update({'value': value})
+                            self._webdata[item.property.path].update({'type': item.property.type})
                             item.set(value, 'Database', source='DBInit', prev_change=self._datetime(prev_change[0]), last_change=last_change)
                         else:
-                            self.logger.warning(f"Debug init for item {item.id()}: {value}, {prev_change}, {prev_change[0]}")
+                            self.logger.warning(f"Debug init for item {item.property.path}: {value}, {prev_change}, {prev_change[0]}")
                         if value is not None and self.get_iattr_value(item.conf, 'database_acl') is not None and self.get_iattr_value(item.conf, 'database_acl').lower() == 'ro':
-                            #self.logger.debug(f"DEBUG: Parse item, doing buffer insert for ItemID: {item.id()}: {value}, databse_acl {self.get_iattr_value(item.conf, 'database_acl').lower()}")
+                            #self.logger.debug(f"DEBUG: Parse item, doing buffer insert for ItemID: {item.property.path}: {value}, databse_acl {self.get_iattr_value(item.conf, 'database_acl').lower()}")
                             self._buffer_insert(item, [(self._timestamp(self.shtime.now()), None, value)])
                     except Exception as e:
-                        self.logger.error("Reading cache value from database for {} failed: {}".format(item.id(), e))
+                        self.logger.error("Reading cache value from database for {} failed: {}".format(item.property.path, e))
                 else:
-                    self.logger.warning("Cache not available in database for item {}".format(item.id() ))
+                    self.logger.notice(f"No cached value available in database for item {item.property.path}")
                 cur.close()
                 self._db.release()
             elif self.get_iattr_value(item.conf, 'database').lower() == 'init':
-                self.logger.warning("Db not initialized. Cannot read database value for item {}".format(item.id()))
+                self.logger.warning("Db not initialized. Cannot read database value for item {}".format(item.property.path))
             else:
-                self._webdata[item.id()].update({'value': item.property.value})
-                self._webdata[item.id()].update({'type': item.property.type})
+                self._webdata[item.property.path].update({'value': item.property.value})
+                self._webdata[item.property.path].update({'type': item.property.type})
 
             return self.update_item
         else:
@@ -281,8 +293,8 @@ class Database(SmartPlugin):
 
         # Uncomment to enable item specific debugging:
         #if item.property.path.startswith('test.'):
-        #if item.id() == 'xyz':
-        #    self.logger.warning(f"Debug: updateItem, ItemID: {item.id()}: {item()}, {caller}, {dest}")
+        #if item.property.path == 'xyz':
+        #    self.logger.warning(f"Debug: updateItem, ItemID: {item.property.path}: {item()}, {caller}, {dest}")
         #    debug_item = True
 
         #Determine if item is read/write or read-only:
@@ -380,22 +392,22 @@ class Database(SmartPlugin):
 
         # get source and destination names
         try:
-            database_name = self._connect[0]
+            database_name = next((s for s in self._connect if s.startswith("database:")), '')
             database_name = database_name[9:].strip()
         except:
             database_name = ''
 
         # copy the database file
-        self.logger.warning( f"Starting to copy SQLite3 database file from {database_name} to {self._copy_database_name}")
+        self.logger.info( f"Starting to copy SQLite3 database file from {database_name} to {self._copy_database_name}")
         import shutil
         try:
             shutil.copy2(database_name, self._copy_database_name)
-            self.logger.warning("Finished copying SQLite3 database file")
+            self.logger.info("Finished copying SQLite3 database file")
         except Exception as e:
-            self.logger.Error( f"Error copying SQLite3 database file: {e}")
+            self.logger.error( f"Error copying SQLite3 database file: {e}")
 
-        param_dict = {"copy_database": False}
-        self.update_config_section(param_dict)
+        #param_dict = {"copy_database": False}
+        #self.update_config_section(param_dict)
         return
 
 
@@ -414,7 +426,7 @@ class Database(SmartPlugin):
         """
 
         try:
-            item_path = str(item.id())
+            item_path = str(item.property.path)
         except:
             item_path = item
         try:
@@ -424,7 +436,7 @@ class Database(SmartPlugin):
             id = None
 
         if id is None and create == True:
-            id = [self.insertItem(item.id(), cur)]
+            id = [self.insertItem(item.property.path, cur)]
 
         if (id is None) or (COL_ITEM_ID >= len(id)) :
             return None
@@ -444,7 +456,7 @@ class Database(SmartPlugin):
         """
 
         try:
-            item_path = str(item.id())
+            item_path = str(item.property.path)
         except:
             item_path = item
         try:
@@ -479,14 +491,13 @@ class Database(SmartPlugin):
         This is a public function of the plugin
 
         :param item: Item to get the ID for
-        :param cur: A database cursor object if available (optional)
 
         :return: id of the item within the database
         :rtype: int | None
         """
 
         try:
-            item_path = str(item.id())
+            item_path = str(item.property.path)
         except:
             item_path = item
         try:
@@ -500,6 +511,8 @@ class Database(SmartPlugin):
 
         id = int(row[COL_ITEM_ID])
         last_change = row[COL_ITEM_TIME]
+        if last_change is None:
+            return None
         return self._datetime(last_change)
 
 
@@ -774,7 +787,11 @@ class Database(SmartPlugin):
         :return: Time of oldest log record for the database ID
         """
         params = {'id': id}
-        return self._fetchall("SELECT min(time) FROM {log} WHERE item_id = :id;", params, cur=cur)[0][0]
+        db_values = self._fetchall("SELECT min(time) FROM {log} WHERE item_id = :id;", params, cur=cur)
+        if db_values is None:
+            return None
+        else:
+            return db_values[0][0]
 
 
     def readLatestLog(self, id, time=None, cur=None):
@@ -791,11 +808,18 @@ class Database(SmartPlugin):
         """
         if time is None:
             params = {'id': id}
-            return self._fetchall("SELECT max(time) FROM {log} WHERE item_id = :id;", params, cur=cur)[0][0]
+            db_values = self._fetchall("SELECT max(time) FROM {log} WHERE item_id = :id;", params, cur=cur)
+            if db_values is None:
+                return None
+            else:
+                return db_values[0][0]
         else:
             params = {'id': id, 'time': time}
-            return self._fetchall("SELECT max(time) FROM {log} WHERE item_id = :id AND time <= :time", params, cur=cur)[0][0]
-
+            db_values = self._fetchall("SELECT max(time) FROM {log} WHERE item_id = :id AND time <= :time", params, cur=cur)
+            if db_values is None:
+                return None
+            else:
+                return db_values[0][0]
 
     def readTotalLogCount(self, id=None, time_start=None, time_end=None, cur=None):
         """
@@ -813,7 +837,6 @@ class Database(SmartPlugin):
         if result == []:
             return 0
         return result[0][0]
-
 
     def readLogCount(self, id, time_start=None, time_end=None, cur=None):
         """
@@ -894,18 +917,31 @@ class Database(SmartPlugin):
         self.orphanitemlist = []
         self.orphanlist = []
 
-        items = [item.id() for item in self._buffer]
-        cur = self._db.cursor()
+        items = [item.property.path for item in self._buffer]
         try:
-            for item in self.readItems(cur=cur):
-                if item[COL_ITEM_NAME] not in items:
-                    if log_activity:
-                        self.logger.info(f"- Found data for item w/o database attribute: {item[COL_ITEM_NAME]}")
-                    self.orphanitemlist.append(item)
-                    self.orphanlist.append(item[COL_ITEM_NAME])
+            cur = self._db_maint.cursor()
         except Exception as e:
-            self.logger.error("Database build_orphan_list failed: {}".format(e))
-        cur.close()
+            self.logger.error("Database build_orphan_list failed obtaining cursor: {}".format(e))
+        else:
+
+            try:
+                return_list = self.readItems(cur=cur)
+                if return_list:
+                    for item in return_list:
+                        if item[COL_ITEM_NAME] not in items:
+                            if log_activity:
+                                self.logger.info(f"- Found data for item w/o database attribute: {item[COL_ITEM_NAME]}")
+                            self.orphanitemlist.append(item)
+                            self.orphanlist.append(item[COL_ITEM_NAME])
+            except Exception as e:
+                self.logger.error("Database build_orphan_list failed: {}".format(e))
+
+            try:
+                if cur:
+                    cur.close()
+            except Exception as e:
+                self.logger.error("Database build_orphan_list failed closing cursor: {}".format(e))
+
         self._count_orphanlogentries()
         if log_activity:
             self.logger.info("build_orphan_list: Finished")
@@ -944,17 +980,19 @@ class Database(SmartPlugin):
         logcount = self.readLogCount(item_id)
         if logcount == 0:
             self.logger.info(f"_delete_orphan: Item {item_path} has no log entries")
-            cur = self._db.cursor()
+            cur = self._db_maint.cursor()
             self._execute(self._prepare("DELETE FROM {item} WHERE id = :id;"), {'id': item_id}, cur=cur)
             self.logger.info(f"_delete_orphan: Deleted item entry for {item_path}")
             cur.close()
+            self._db_maint.commit()
             return True
 
-        cur = self._db.cursor()
+        cur = self._db_maint.cursor()
         self._execute(self._prepare("DELETE FROM {log} WHERE item_id = :id ORDER BY time ASC LIMIT :maxrecords;"), {'id': item_id, 'maxrecords': self.delete_orphan_chunk_size}, cur=cur)
         delete_orphan_chunk_size_str = f"{self.delete_orphan_chunk_size:,}".replace(',', '.')
         self.logger.info(f"_delete_orphan: Deleted (up to) {delete_orphan_chunk_size_str} log entries for Item {item_path}")
         cur.close()
+        self._db_maint.commit()
 
         return False
 
@@ -1038,7 +1076,7 @@ class Database(SmartPlugin):
 
         :return: data structure in the form needed by the websocket plugin return it to the visu
         """
-        #self.logger.warning("_series: item={}, func={}, start={}, end={}, count={}".format(item, func, start, end, count))
+        #self.logger.debug("_series: item={}, func={}, start={}, end={}, count={}".format(item, func, start, end, count))
         init = not update
         if sid is None:
             sid = item + '|' + func + '|' + str(start) + '|' + str(end) + '|' + str(count)
@@ -1047,7 +1085,10 @@ class Database(SmartPlugin):
             'avg': 'MIN(time), ' + self._precision_query('AVG(val_num * duration) / AVG(duration)'),
             'avg.order': 'ORDER BY time ASC',
             'integrate': 'MIN(time), SUM(val_num * duration)',
-            'differentiate': 'MIN(time), (val_num - LAG(val_num,1, -1)) / duration',
+            'diff': 'MIN(time), (val_num - LAG(val_num,1) OVER (ORDER BY val_num))',
+            'duration': 'MIN(time), duration',
+            # differentiate (d/dt) is scaled to match the conversion from d/dt (kWh) = kWh: time is in ms, val_num in kWh, therefore scale by 1000ms and 3600s/h to obtain the result in kW:
+            'differentiate': 'MIN(time), (val_num - LAG(val_num,1) OVER (ORDER BY val_num)) / ( (time - LAG(time,1) OVER (ORDER BY val_num)) / (3600 * 1000) )',
             'count': 'MIN(time), SUM(CASE WHEN val_num{op}{value} THEN 1 ELSE 0 END)'.format(**expression['params']),
             'countall': 'MIN(time), COUNT(*)',
             'min': 'MIN(time), MIN(val_num)',
@@ -1066,22 +1107,26 @@ class Database(SmartPlugin):
         group = 'GROUP BY ROUND(time / :step)' if func + '.group' not in queries else queries[func + '.group']
         logs = self._fetch_log(item, queries[func], start, end, step=step, count=count, group=group, order=order)
         tuples = logs['tuples']
-        if tuples:
-            if logs['istart'] > tuples[0][0]:
-                tuples[0] = (logs['istart'], tuples[0][1])
-            if end != 'now':
-                tuples.append((logs['iend'], tuples[-1][1]))
-        else:
-            tuples = []
-        item_change = self._timestamp(logs['item'].last_change())
-        if item_change < logs['iend']:
-            value = float(logs['item']())
-            if item_change < logs['istart']:
-                tuples.append((logs['istart'], value))
-            elif init:
-                tuples.append((item_change, value))
-            if init:
-                tuples.append((logs['iend'], value))
+
+        # Append tuples by addition values (not for func differentiate)
+        if func != 'differentiate':
+
+            if tuples:
+                if logs['istart'] > tuples[0][0]:
+                    tuples[0] = (logs['istart'], tuples[0][1])
+                if end != 'now':
+                    tuples.append((logs['iend'], tuples[-1][1]))
+            else:
+                tuples = []
+            item_change = self._timestamp(logs['item'].last_change())
+            if item_change < logs['iend']:
+                value = float(logs['item']())
+                if item_change < logs['istart']:
+                    tuples.append((logs['istart'], value))
+                elif init:
+                    tuples.append((item_change, value))
+                if init:
+                    tuples.append((logs['iend'], value))
 
         if expression['finalizer']:
             tuples = self._finalize(expression['finalizer'], tuples)
@@ -1092,14 +1137,15 @@ class Database(SmartPlugin):
                        'step': logs['step'], 'sid': sid},
             'update': self.shtime.now() + datetime.timedelta(seconds=int(logs['step'] / 1000))
         }
-        #self.logger.warning("_series: result={}".format(result))
+        self.logger.dbgmed(f"_series: {sid=}, {step=}, update={result['update']}, delta={int(logs['step'] / 1000)}, now={self.shtime.now()}")
+        #self.logger.debug("_series: result={}".format(result))
+
         return result
 
 
     def _single(self, func, start, end='now', item=None):
         """
-        As far as it has been checked, this method is never called.
-        It is attached to the item object but no other plugin is known that calls this method.
+        This function is not used by any other plugin but can be used in logics
 
         :param func:
         :param start:
@@ -1111,11 +1157,11 @@ class Database(SmartPlugin):
         queries = {
             'avg': self._precision_query('AVG(val_num * duration) / AVG(duration)'),
             'integrate': 'SUM(val_num * duration)',
-            'differentiate': 'val_num - LAG(val_num) / duration',
             'count': 'SUM(CASE WHEN val_num{op}{value} THEN 1 ELSE 0 END)'.format(**expression['params']),
             'countall': 'COUNT(*)',
             'min': 'MIN(val_num)',
             'max': 'MAX(val_num)',
+            'diff': 'MAX(val_num) - MIN(val_num)',
             'on': self._precision_query('SUM(val_bool * duration) / SUM(duration)'),
             'sum': 'SUM(val_num)',
             'raw': 'val_num',
@@ -1371,10 +1417,10 @@ class Database(SmartPlugin):
                     end = changed
                     val = item()
                     try:
-                        self._webdata[item.id()].update({'value': val})
-                        self._webdata[item.id()].update({'type': item.property.type})
+                        self._webdata[item.property.path].update({'value': val})
+                        self._webdata[item.property.path].update({'type': item.property.type})
                     except Exception as e:
-                        self.logger.warning("Problem webdata value update {}: {}".format(item.id(), e))
+                        self.logger.warning("Problem webdata value update {}: {}".format(item.property.path, e))
 
                     # When finalizing (e.g. plugin shutdown) add current value to item and log
                     if finalize:
@@ -1389,7 +1435,7 @@ class Database(SmartPlugin):
                         if self.get_iattr_value(item.conf, 'database_write_on_shutdown') == False:
                             self.logger.debug(f"DEBUG _dump: Blocking rewrite to DB for item {item} with value {val}")
 
-                            #if item.id() == 'xyz':
+                            #if item.property.path == 'xyz':
                             #    self.logger.warning(f"DEBUG _dump: update debug item with start {start}, val {val}, changed {changed}")
 
                             _update = (start, val, changed)
@@ -1409,7 +1455,7 @@ class Database(SmartPlugin):
                     id = self.id(item, cur=cur)
 
                     # Dump tuples
-                    self.logger.debug('Dumping {}/{} with {} values'.format(item.id(), id, len(tuples)))
+                    self.logger.debug('Dumping {}/{} with {} values'.format(item.property.path, id, len(tuples)))
 
                     for t in tuples:
                         if len(self.readLog(id, t[0], cur)):
@@ -1424,7 +1470,7 @@ class Database(SmartPlugin):
 
                     self._db.commit()
                 except Exception as e:
-                    self.logger.warning("Problem dumping {}: {}".format(item.id(), e))
+                    self.logger.warning("Problem dumping {}: {}".format(item.property.path, e))
                     try:
                         self._db.rollback()
                     except Exception as er:
@@ -1500,7 +1546,7 @@ class Database(SmartPlugin):
                 self._maxage_worklist = [i for i in self._items_with_maxage]
             else:
                 self._maxage_worklist = [i for i in self._handled_items]
-            self.logger.info(f"remove_older_: Worklist filled with {len(self._items_with_maxage)} items")
+            self.logger.info(f"remove_older_: Worklist filled with {len(self._maxage_worklist)} items")
 
         item = self._maxage_worklist.pop(0)
         itempath = item.property.path
@@ -1573,7 +1619,7 @@ class Database(SmartPlugin):
         # update the logCount for the item
         logcount = self.readLogCount(item_id)
         self._item_logcount[item_id] = logcount
-        self._webdata[item.id()].update({'logcount': logcount})
+        self._webdata[item.property.path].update({'logcount': logcount})
 
         return
 
@@ -1612,8 +1658,8 @@ class Database(SmartPlugin):
             logcount = self.readLogCount(item_id)
             self._item_logcount[item_id] = logcount
             self._items_total_entries += logcount
-            self._webdata[item.id()].update({'logcount': logcount})
-            #self._webdata[item.id()].update({'logcount': f"{logcount:,}".replace(',', '.')})
+            self._webdata[item.property.path].update({'logcount': logcount})
+            #self._webdata[item.property.path].update({'logcount': f"{logcount:,}".replace(',', '.')})
 
         self._items_still_counting = False
         return
@@ -1624,6 +1670,7 @@ class Database(SmartPlugin):
     # ------------------------------------------
 
     def _initialize_db(self):
+        # initialize main db connection
         try:
             if not self._db.connected():
                 # limit connection requests to 20 seconds.
@@ -1634,7 +1681,7 @@ class Database(SmartPlugin):
                     self.last_connect_time = time.time()
                     self._db.connect()
                 else:
-                    self.logger.error("Database reconnect supressed: Delta time: {0}".format(time_delta_last_connect))
+                    self.logger.info("Database reconnect supressed: Delta time: {0}".format(time_delta_last_connect))
                     return False
 
             if not self._db_initialized:
@@ -1642,7 +1689,36 @@ class Database(SmartPlugin):
                     {i: [self._prepare(query[0]), self._prepare(query[1])] for i, query in self._setup.items()})
                 self._db_initialized = True
         except Exception as e:
-            self.logger.critical("Database: Initialization failed: {}".format(e))
+            if self.driver.lower() == 'sqlite3':
+                self.logger.critical(f"Database: Initialization failed: {e}")
+                self.logger.error(f" - connection string={self._connect}")
+                self.logger.error(f" - working directory={os.getcwd()}")
+                self._sh.restart('SmartHomeNG (Database plugin stalled)')
+                exit(0)
+            else:
+                self.logger.critical(f"Database: Initialization failed: {e}")
+                return False
+
+        # initialize db maintenance connection
+        try:
+            if not self._db_maint.connected():
+                # limit connection requests to 20 seconds.
+                current_time = time.time()
+                time_delta_last_maint_connect = current_time - self.last_maint_connect_time
+                self.logger.debug("DEBUG: delta {0}".format(time_delta_last_maint_connect))
+                if (time_delta_last_maint_connect >  20):
+                    self.last_maint_connect_time = time.time()
+                    self._db_maint.connect()
+                else:
+                    self.logger.error("Database reconnect (maintenance connection) supressed: Delta time: {0}".format(time_delta_last_connect))
+                    return False
+
+            if not self._db_maint_initialized:
+                self._db_maint.setup(
+                    {i: [self._prepare(query[0]), self._prepare(query[1])] for i, query in self._setup.items()})
+                self._db_maint_initialized = True
+        except Exception as e:
+            self.logger.critical("Database: Initialization of maintenance connection failed: {}".format(e))
             if self.driver.lower() == 'sqlite3':
                 self._sh.restart('SmartHomeNG (Database plugin stalled)')
                 exit(0)

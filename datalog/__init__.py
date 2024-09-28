@@ -30,7 +30,7 @@ shtime = Shtime.get_instance()
 class DataLog(SmartPlugin):
 
     ALLOW_MULTIINSTANCE = True
-    PLUGIN_VERSION = '1.5.1'
+    PLUGIN_VERSION = '1.5.2'
 
     filepatterns = {}
     logpatterns = {}
@@ -40,6 +40,7 @@ class DataLog(SmartPlugin):
     _buffer_lock = None
 
     def __init__(self, smarthome, *args, **kwargs):
+        super().__init__()
         self.path = self.get_parameter_value('path')
         self.logger = logging.getLogger(__name__)
 
@@ -107,17 +108,17 @@ class DataLog(SmartPlugin):
             found = False
             for log in logs:
                 if log not in self.filepatterns:
-                    self.logger.debug('Unknown log "{}" for item {}'.format(log, item.id()))
+                    self.logger.debug('Unknown log "{}" for item {}'.format(log, item.property.path))
                     return None
 
                 if log not in self._buffer:
                     self._buffer[log] = []
 
-                if item.id() not in self._items:
-                    self._items[item.id()] = []
+                if item.property.path not in self._items:
+                    self._items[item.property.path] = []
 
-                if log not in self._items[item.id()]:
-                   self._items[item.id()].append(log)
+                if log not in self._items[item.property.path]:
+                   self._items[item.property.path].append(log)
                    found = True
 
             if found:
@@ -132,9 +133,9 @@ class DataLog(SmartPlugin):
         if caller != 'DataLog':
             pass
 
-        if item.id() in self._items:
-            for log in self._items[item.id()]:
-                self._buffer[log].append({ 'time' : shtime.now(), 'item' : item.id(), 'value' : item() })
+        if item.property.path in self._items:
+            for log in self._items[item.property.path]:
+                self._buffer[log].append({ 'time' : shtime.now(), 'item' : item.property.path, 'value' : item() })
 
     def _dump(self):
         data = {}

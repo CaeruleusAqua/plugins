@@ -5,8 +5,7 @@
 #########################################################################
 #  This file is part of SmartHomeNG.
 #
-#  Sample plugin for new plugins to run with SmartHomeNG version 1.4 and
-#  upwards.
+#  Plugin to read and control some features of UniFi Controllers
 #
 #  SmartHomeNG is free software: you can redistribute it and/or modify
 #  it under the terms of the GNU General Public License as published by
@@ -29,6 +28,7 @@ from jinja2 import Environment, FileSystemLoader
 import cherrypy
 from lib.module import Modules
 from lib.model.smartplugin import *
+from .webif import WebInterface
 from lib.utils import Utils
 from plugins.unifi.ubiquiti.unifi import API as UniFiAPI
 from plugins.unifi.ubiquiti.unifi import DataException as UniFiDataException
@@ -96,7 +96,7 @@ class UniFiControllerClientModel():
         self._items.append(item)
 
     def append_item_issue(self, item, issue, level):
-        ipath = item.path()
+        ipath = item.property.path
         if not self._items_with_issues.__contains__(ipath):
             self._items_with_issues[ipath] = UniFiItemIssue(ipath)
 
@@ -289,13 +289,13 @@ class UniFiControllerClient(SmartPlugin):
     the update functions for the items
     """
 
-    PLUGIN_VERSION = '1.6.2'
+    PLUGIN_VERSION = '1.6.3'
 
     def __init__(self, sh, *args, **kwargs):
         """
         Initalizes the plugin. The parameters describe for this method are pulled from the entry in plugin.yaml.
         """
-
+        super().__init__()
         from bin.smarthome import VERSION
         if '.'.join(VERSION.split('.', 2)[:2]) <= '1.5':
             self.logger = logging.getLogger(__name__)
@@ -319,7 +319,7 @@ class UniFiControllerClient(SmartPlugin):
         self._cycle = self.get_parameter_value(UniFiConst.PARAMETER_CYCLE_TIME)
         self._logging = True
 
-        self.init_webinterface()
+        self.init_webinterface(WebInterface)
 
         return
 
@@ -364,21 +364,21 @@ class UniFiControllerClient(SmartPlugin):
             self._model.append_item_issue(item, "1: "+msg, 1)
 
         if enable_logging:
-            self.logger.info(msg + " in item " + item.path())
+            self.logger.info(msg + " in item " + item.property.path)
 
     def _log_item_warning(self, item, msg: str, enable_logging=True):
         self._model.append_item_issue(item, "3: "+msg, 3)
         if enable_logging:
-            self.logger.warning(msg + " in item " + item.path())
+            self.logger.warning(msg + " in item " + item.property.path)
 
     def _log_item_error(self, item, msg: str, enable_logging=True):
         self._model.append_item_issue(item, "4: " + msg, 4)
         if enable_logging:
-            self.logger.error(msg + " in item " + item.path())
+            self.logger.error(msg + " in item " + item.property.path)
 
     def _mac_check(self, item, item_type: str, leaf_item=None):
         if not Utils.is_mac(self.get_iattr_value(item.conf, item_type)):
-            self._log_item_error(item, "invalid {} attribute provided from {}".format(item_type, item.path()))
+            self._log_item_error(item, "invalid {} attribute provided from {}".format(item_type, item.property.path))
             return False
         return True
 
@@ -394,9 +394,9 @@ class UniFiControllerClient(SmartPlugin):
                 if not check is None:
                     if not check(item, item_type, leaf_item):
                         return None
-                if not (item.path() == leaf_item.path()):
+                if not (item.property.path == leaf_item.property.path):
                     self._log_item_info(leaf_item, "{} attribute provided from {}".format(
-                        item_type, item.path()), enable_logging)
+                        item_type, item.property.path), enable_logging)
                 return self.get_iattr_value(item.conf, item_type)
         except AttributeError:
             self._log_item_warning(leaf_item, "No {} attribute provided".format(item_type), enable_logging)
@@ -416,9 +416,9 @@ class UniFiControllerClient(SmartPlugin):
                     if not check is None:
                         if not check(item, item_type, leaf_item):
                             return None
-                    if not (item.path() == leaf_item.path()):
+                    if not (item.property.path == leaf_item.property.path):
                         self._log_item_info(leaf_item, "{} attribute provided from {} ".format(
-                            item_type, item.path()), enable_logging)
+                            item_type, item.property.path), enable_logging)
 
                     return self.get_iattr_value(item.conf, item_type)
             except AttributeError:
@@ -657,85 +657,3 @@ class UniFiControllerClient(SmartPlugin):
         except ConnectionError as ex:
             self._pollfailed += 1
             self.logger.error("Poll failed: {} for {} time(s) in a row.".format(repr(ex), self._pollfailed))
-
-    def init_webinterface(self):
-        """"
-        Initialize the web interface for this plugin
-
-        This method is only needed if the plugin is implementing a web interface
-        """
-        try:
-            # try/except to handle running in a core version that does not support modules
-            self.mod_http = Modules.get_instance().get_module('http')
-        except:
-            self.mod_http = None
-        if self.mod_http == None:
-            self.logger.error("Not initializing the web interface")
-            return False
-
-        import sys
-        if not "SmartPluginWebIf" in list(sys.modules['lib.model.smartplugin'].__dict__):
-            self.logger.warning("Web interface needs SmartHomeNG v1.5 and up. Not initializing the web interface")
-            return False
-
-        # set application configuration for cherrypy
-        webif_dir = self.path_join(self.get_plugin_dir(), 'webif')
-        config = {
-            '/': {
-                'tools.staticdir.root': webif_dir,
-            },
-            '/static': {
-                'tools.staticdir.on': True,
-                'tools.staticdir.dir': 'static'
-            }
-        }
-
-        # Register the web interface as a cherrypy app
-        self.mod_http.register_webif(WebInterface(webif_dir, self),
-                                     self.get_shortname(),
-                                     config,
-                                     self.get_classname(), self.get_instance_name(),
-                                     description='')
-
-        return True
-
-
-# ------------------------------------------
-#    Webinterface of the plugin
-# ------------------------------------------
-
-
-class WebInterface(SmartPluginWebIf):
-
-    def __init__(self, webif_dir, plugin):
-        """
-        Initialization of instance of class WebInterface
-
-        :param webif_dir: directory where the webinterface of the plugin resides
-        :param plugin: instance of the plugin
-        :type webif_dir: str
-        :type plugin: object
-        """
-        self.logger = logging.getLogger(__name__)
-        self.webif_dir = webif_dir
-        self.plugin = plugin
-        self.tplenv = self.init_template_environment()
-
-    @cherrypy.expose
-    def index(self, reload=None):
-        """
-        Build index.html for cherrypy
-
-        Render the template and return the html file to be delivered to the browser
-
-        :return: contents of the template after beeing rendered
-        """
-
-        tabcount = 2
-
-        tmpl = self.tplenv.get_template('index.html')
-        return tmpl.render(plugin_shortname=self.plugin.get_shortname(),
-                           plugin_version=self.plugin.get_version(),
-                           plugin_info=self.plugin.get_info(),
-                           tabcount=tabcount,
-                           p=self.plugin)

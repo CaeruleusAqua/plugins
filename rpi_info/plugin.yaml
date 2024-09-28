@@ -13,7 +13,7 @@ plugin:
 #    support: https://knx-user-forum.de/forum/supportforen/smarthome-py
 
     version: 1.0.0                  # Plugin version (must match the version specified in __init__.py)
-    sh_minversion: 1.8              # minimum shNG version to use this plugin
+    sh_minversion: '1.8'              # minimum shNG version to use this plugin
 #    sh_maxversion:                 # maximum shNG version to use this plugin (leave empty if latest)
 #    py_minversion: 3.6             # minimum Python version to use for this plugin
 #    py_maxversion:                 # maximum Python version to use for this plugin (leave empty if latest)
@@ -22,28 +22,6 @@ plugin:
     classname: RPi_Info             # class containing the plugin
 
 parameters:
-    webif_pagelength:
-        type: int
-        default: 100
-        valid_list:
-          - -1
-          - 0
-          - 25
-          - 50
-          - 100
-        description:
-            de: 'Anzahl an Items, die standardmäßig in einer Web Interface Tabelle pro Seite angezeigt werden.
-                 0 = automatisch, -1 = alle'
-            en: 'Amount of items being listed in a web interface table per page by default.
-                 0 = automatic, -1 = all'
-        description_long:
-            de: 'Anzahl an Items, die standardmäßig in einer Web Interface Tabelle pro Seite angezeigt werden.\n
-                 Bei 0 wird die Tabelle automatisch an die Höhe des Browserfensters angepasst.\n
-                 Bei -1 werden alle Tabelleneinträge auf einer Seite angezeigt.'
-            en: 'Amount of items being listed in a web interface table per page by default.\n
-                 0 adjusts the table height automatically based on the height of the browser windows.\n
-                 -1 shows all table entries on one page.'
-
     poll_cycle:
         type: int
         default: 120

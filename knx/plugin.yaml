@@ -10,11 +10,10 @@ plugin:
     tester: psilo909, onkelandy, Sandman60, brandst
     state: qa-passed
     keywords: KNX knxd listen cache bus
-    documentation: http://smarthomeng.de/user/plugins/knx/user_doc.html
     support: https://knx-user-forum.de/forum/supportforen/smarthome-py/1552531-support-thread-zum-knx-plugin
 
-    sh_minversion: 1.9.0          # minimum shNG version to use this plugin
-    version: 1.8.3                 # Plugin version
+    sh_minversion: '1.9.0'          # minimum shNG version to use this plugin
+    version: 1.8.5                 # Plugin version
 #    sh_maxversion:                # maximum shNG version to use this plugin (leave empty if latest)
     multi_instance: true           # plugin supports multi instance
     restartable: true
@@ -52,9 +51,11 @@ parameters:
           - 'logger'
           - 'true'
           - 'false'
+          - 'True'
+          - 'False'
         valid_list_description:
-            de: ['Ein', 'Aus', 'in eigenen Logger', 'Ein', 'Aus']
-            en: ['On', 'Off', 'to own logger', 'On', 'Off']
+            de: ['Ein', 'Aus', 'in eigenen Logger', 'Ein', 'Aus', 'Ein', 'Aus']
+            en: ['On', 'Off', 'to own logger', 'On', 'Off', 'On', 'Off']
         description:
             de: "Wenn auf 'on'/'true' gesetzt, wird jedes KNX-Paket im Standard-Logger protokolliert. Wenn 'logger' eingestellt ist, werden alle KNX-Meldungen in einem separaten Logger 'knx_busmonitor' protokolliert."
             en: "If set to 'on'/'true' every KNX packet will be logged to the default plugin logger. If set to 'logger', all knx messages will be logged to a separate logger 'knx_busmonitor'"
@@ -159,27 +160,6 @@ parameters:
             de: 'Legt optional ein Passwort für den Zugriff auf eine knxproj Datei fest'
             en: 'Set a pasword to be able to unzip a knxproj file'
 
-    webif_pagelength:
-        type: int
-        valid_list:
-          - -1
-          - 0
-          - 25
-          - 50
-          - 100
-        description:
-            de: 'Anzahl an Items, die standardmäßig in einer Web Interface Tabelle pro Seite angezeigt werden.
-                 0 = automatisch, -1 = alle'
-            en: 'Amount of items being listed in a web interface table per page by default.
-                 0 = automatic, -1 = all'
-        description_long:
-            de: 'Anzahl an Items, die standardmäßig in einer Web Interface Tabelle pro Seite angezeigt werden.\n
-                 Bei 0 wird die Tabelle automatisch an die Höhe des Browserfensters angepasst.\n
-                 Bei -1 werden alle Tabelleneinträge auf einer Seite angezeigt.'
-            en: 'Amount of items being listed in a web interface table per page by default.\n
-                 0 adjusts the table height automatically based on the height of the browser windows.\n
-                 -1 shows all table entries on one page.'
-
 item_attributes:
     # Definition of item attributes defined by this plugin
     knx_dpt:
@@ -193,6 +173,8 @@ item_attributes:
          - '5'
          - '5001'
          - '5.001'
+         - '5003'
+         - '5.003'
          - '5999'
          - '5.999'
          - '6'
@@ -230,6 +212,8 @@ item_attributes:
              - 'Relativwert, 0 … 255 (8 Bit) -> num'
              - 'Relativwert, 0 … 100 % (8 Bit) -> num'
              - 'Relativwert, 0 … 100 % (8 Bit) -> num'
+             - 'Winkel, 0 … 360 ° (8 Bit) -> num'
+             - 'Winkel, 0 … 360 ° (8 Bit) -> num'
              - 'Spezial DPT für Tebis TS Systeme, (8 Bit) -> num'
              - 'Spezial DPT für Tebis TS Systeme, (8 Bit) -> num'
              - 'Ganzzahl -128 - 127 (8 Bit) -> num'
@@ -266,6 +250,8 @@ item_attributes:
              - 'Relative value, 0 … 255 (8 Bit) -> num'
              - 'Relative value, 0 … 100 % (8 Bit) -> num'
              - 'Relative value, 0 … 100 % (8 Bit) -> num'
+             - 'Angle value, 0 … 360 ° (8 Bit) -> num'
+             - 'Angle value, 0 … 360 ° (8 Bit) -> num'
              - 'Special DPT for Tebis TS systems, (8 Bit) -> num'
              - 'Special DPT for Tebis TS systems, (8 Bit) -> num'
              - 'Integer -128 - 127 (8 Bit) -> num'
@@ -312,14 +298,14 @@ item_attributes:
     knx_init:
         type: knx_ga
         description:
-            de: 'Gruppenadresse für die Initialisierung des Items. Der KNX-Bus wird nach dem Wert abgefragt. Die Angabe impliziert knx_listen, also muss knx_listen nicht für diese Gruppenadresse angegeben werden. Wie bei knx_listen kann eine Liste von GAs angegeben werden. Dann wird der erste Eintrag der Liste für die Initialisierung verwendet.'
-            en: 'Group address to use for initialization of the item. The KNX bus is queried for the value. It implies knx_listen, so knx_listen need not to be specified for this group address. Like for knx_listen a list of GAs can be specified. In this case, the first list entry is used to read the KNX cache.'
+            de: 'Gruppenadresse für die Initialisierung des Items. Der KNX-Bus wird nach dem Wert abgefragt. Die Angabe impliziert knx_listen, also muss knx_listen nicht für diese Gruppenadresse angegeben werden.'
+            en: 'Group address to use for initialization of the item. The KNX bus is queried for the value. It implies knx_listen, so knx_listen need not to be specified for this group address.'
 
     knx_cache:
         type: knx_ga
         description:
-            de: 'Gruppenadresse für die Initialisierung des Items. Der Wert wird aus dem Cache von KNXD/EIBD gelesen. Wenn kein Cache-Wert vorhanden ist, wird der KNX-Bus nach dem Wert abgefragt. Die Angabe impliziert knx_listen, also muss knx_listen nicht für diese Gruppenadresse angegeben werden. Wie bei knx_listen kann eine Liste von GAs angegeben werden. Dann wird der erste Eintrag der Liste für die Initialisierung verwendet.'
-            en: 'Group address to use for initialization of the item. The value is read from the cache of KNXD/EIBD. If no cached value exists, the KNX bus is queried for the value. It implies knx_listen, so knx_listen need not to be specified for this group address. Like for knx_listen a list of GAs can be specified. In this case, the first list entry is used to read the KNX cache.'
+            de: 'Gruppenadresse für die Initialisierung des Items. Der Wert wird aus dem Cache von KNXD/EIBD gelesen. Wenn kein Cache-Wert vorhanden ist, wird der KNX-Bus nach dem Wert abgefragt. Die Angabe impliziert knx_listen, also muss knx_listen nicht für diese Gruppenadresse angegeben werden.'
+            en: 'Group address to use for initialization of the item. The value is read from the cache of KNXD/EIBD. If no cached value exists, the KNX bus is queried for the value. It implies knx_listen, so knx_listen need not to be specified for this group address.'
 
     knx_reply:
         type: list(knx_ga)
@@ -405,6 +391,8 @@ plugin_functions:
                  - '5'
                  - '5001'
                  - '5.001'
+                 - '5003'
+                 - '5.003'
                  - '5999'
                  - '5.999'
                  - '6'
@@ -441,6 +429,8 @@ plugin_functions:
                      - 'Relativwert, 0 … 255 (8 Bit) -> num'
                      - 'Relativwert, 0 … 100 % (8 Bit) -> num'
                      - 'Relativwert, 0 … 100 % (8 Bit) -> num'
+                     - 'Winkel, 0 … 360 ° (8 Bit) -> num'
+                     - 'Winkel, 0 … 360 ° (8 Bit) -> num'
                      - 'Spezial DPT für Tebis TS Systeme, (8 Bit) -> num'
                      - 'Spezial DPT für Tebis TS Systeme, (8 Bit) -> num'
                      - 'Ganzzahl -128 - 127 (8 Bit) -> num'
@@ -476,6 +466,8 @@ plugin_functions:
                      - 'Relative value, 0 … 255 (8 Bit) -> num'
                      - 'Relative value, 0 … 100 % (8 Bit) -> num'
                      - 'Relative value, 0 … 100 % (8 Bit) -> num'
+                     - 'Angle value, 0 … 360 ° (8 Bit) -> num'
+                     - 'Angle value, 0 … 360 ° (8 Bit) -> num'
                      - 'Special DPT for Tebis TS systems, (8 Bit) -> num'
                      - 'Special DPT for Tebis TS systems, (8 Bit) -> num'
                      - 'Integer -128 - 127 (8 Bit) -> num'

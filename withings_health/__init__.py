@@ -7,8 +7,7 @@
 #  https://www.smarthomeNG.de
 #  https://knx-user-forum.de/forum/supportforen/smarthome-py
 #
-#  Sample plugin for new plugins to run with SmartHomeNG version 1.5 and
-#  upwards.
+#  Plugin for withings health devices
 #
 #  SmartHomeNG is free software: you can redistribute it and/or modify
 #  it under the terms of the GNU General Public License as published by
@@ -29,6 +28,7 @@ import cherrypy
 import datetime
 from lib.model.smartplugin import *
 from lib.shtime import Shtime
+from lib.utils import Utils
 from oauthlib.oauth2.rfc6749.errors import MissingTokenError
 from typing_extensions import Final
 from withings_api import AuthScope, WithingsApi, WithingsAuth
@@ -37,7 +37,7 @@ from .webif import WebInterface
 
 
 class WithingsHealth(SmartPlugin):
-    PLUGIN_VERSION = "1.8.2"
+    PLUGIN_VERSION = "1.8.4"
 
     def __init__(self, sh):
         super().__init__()
@@ -129,8 +129,10 @@ class WithingsHealth(SmartPlugin):
                         userid=self._user_id,
                         client_id=self._client_id,
                         consumer_secret=self._consumer_secret)
-
-                    self._client = WithingsApi(self._creds, refresh_cb=self._store_tokens)
+                    try:
+                        self._client = WithingsApi(self._creds, refresh_cb=self._store_tokens)
+                    except Exception as e:
+                        self.logger.error("Client can not be initialized.")
                 else:
                     self.logger.error(
                         "Token is expired, run OAuth2 again from Web Interface (Expiry Date: {}).".format(
@@ -326,7 +328,7 @@ class WithingsHealth(SmartPlugin):
         return self._consumer_secret
 
     def get_callback_url(self):
-        ip = self.mod_http.get_local_ip_address()
+        ip = Utils.get_local_ipv4_address()
         port = self.mod_http.get_local_port()
         web_ifs = self.mod_http.get_webifs_for_plugin(self.get_shortname())
         for web_if in web_ifs:

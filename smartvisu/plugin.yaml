@@ -6,16 +6,16 @@ plugin:
         de: 'smartVISU Unterstützung: Autogenerierung von Seiten; Widget Handling'
         en: 'Support for smartVISU: Automatic generation of pages; widget handling'
     maintainer: msinn
-    tester: wvhn
+    tester: wvhn, onkelandy
     state: ready
-#    keywords: iot xyz
-    documentation: http://smarthomeng.de/user/plugins/visu_smartvisu/user_doc.html
+    #keywords: iot xyz
+    #documentation: ''
     support: https://knx-user-forum.de/forum/supportforen/smarthome-py/1586800-support-thread-für-das-smartvisu-plugin
 
-    version: 1.8.6                 # Plugin version
-    sh_minversion: 1.8.1           # minimum shNG version to use this plugin
+    version: 1.8.16                # Plugin version
+    sh_minversion: '1.9.3.5'         # minimum shNG version to use this plugin
 #    sh_maxversion:                 # maximum shNG version to use this plugin (leave empty if latest)
-    py_minversion: 3.6             # minimum Python version to use for this plugin
+    py_minversion: '3.6'             # minimum Python version to use for this plugin
 #    py_maxversion:                 # maximum Python version to use for this plugin (leave empty if latest)
     multi_instance: True           # plugin supports multi instance
     restartable: True
@@ -32,7 +32,7 @@ parameters:
 
     generate_pages:
         type: bool
-        default: True
+        default: False
         description:
             de: 'Falls True, werden Seiten für smartVISU generiert'
             en: 'If True, pages for smartVISU are generated'
@@ -88,6 +88,13 @@ parameters:
         description:
             de: 'Sollen Deprecated- bzw. Removed Warnungen und Fehler einzeln geloggt werden?'
             en: 'Should individual Deprecated/Removed warnings and errors be logged?'
+
+#    protocol_over_reverseproxy:
+#        type: bool
+#        default: False
+#        description:
+#            de: 'Clients greifen über einen Reverse Proxy auf SmartHomeNG zu'
+#            en: 'Clients access SmartHomeNG via a reverse proxy'
 
 item_attributes:
     # Definition of item attributes defined by this plugin
@@ -226,4 +233,3 @@ plugin_functions:
                 description:
                     de: "Falls angegeben, werden nur Clients (Browser) die auf dem Host mit der angegebenen IP Adresse laufen angewiesen die Seite zu wechseln. "
                     en: "If specified, only clients (browsers) running on the host with the specified ip address are instructed to change the page."
-

@@ -122,7 +122,6 @@ class AVDevice(SmartPlugin):
             rs232_timeout = self.get_parameter_value('rs232_timeout')
             update_exclude = self.get_parameter_value('update_exclude')
             statusquery = self.get_parameter_value('statusquery')
-            self.webif_pagelength = self.get_parameter_value('webif_pagelength')
 
             # Initializing all variables
             self.logger.debug("Initializing {}: Resendwait: {}. Seconds to keep: {}.".format(self._name, self._resend_wait,
@@ -283,12 +282,12 @@ class AVDevice(SmartPlugin):
         :param item:
         :param payload:
         """
-        if not self._item_values.get(item.id()):
-            self._item_values[item.id()] = {}
+        if not self._item_values.get(item.property.path):
+            self._item_values[item.property.path] = {}
         if isinstance(payload, bool):
-            self._item_values[item.id()]['value'] = str(payload)
+            self._item_values[item.property.path]['value'] = str(payload)
         else:
-            self._item_values[item.id()]['value'] = payload
+            self._item_values[item.property.path]['value'] = payload
         return
 
     # Store actual value to a temporary dict for resetting purposes
@@ -1202,7 +1201,7 @@ class AVDevice(SmartPlugin):
                                 expectedvalue = eval(expectedvalue.lstrip('0'))
                             except Exception:
                                 pass
-                            if type(dependvalue) == type(expectedvalue):
+                            if type(dependvalue) == type(expectedvalue) or (isinstance(dependvalue, (int,float)) and isinstance(expectedvalue, (int,float))):
                                 groupcount[group] += 1 if (dependvalue == expectedvalue and compare == '==') or \
                                                           (dependvalue >= expectedvalue and compare == '>=') or \
                                                           (dependvalue <= expectedvalue and compare == '<=') or \
@@ -1257,7 +1256,7 @@ class AVDevice(SmartPlugin):
                                     self.logger.log(VERBOSE2,
                                                     "Checking Dependency {}: Expectedvalue after Translation {}. Dependitem: {}, expected {}".format(
                                                         self._name, expectedvalue, dependitem, expectedvalue))
-                                    if type(dependvalue) == type(expectedvalue):
+                                    if type(dependvalue) == type(expectedvalue) or (isinstance(dependvalue, (int,float)) and isinstance(expectedvalue, (int,float))):
                                         groupcount[group] += 1 if (dependvalue == expectedvalue and compare == '==') or \
                                                                   (dependvalue >= expectedvalue and compare == '>=') or \
                                                                   (dependvalue <= expectedvalue and compare == '<=') or \

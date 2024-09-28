@@ -60,15 +60,19 @@ Example payload contents:
   </ZoneGroupState>
 
 """
+
+import asyncio
 import logging
 import time
+from weakref import WeakSet
 
 from lxml import etree as LXML
 
 from . import config
+from .events_base import SubscriptionBase
+from .exceptions import NotSupportedException, SoCoException, SoCoUPnPException
 from .groups import ZoneGroup
 
-EVENT_CACHE_TIMEOUT = 60
 POLLING_CACHE_TIMEOUT = 5
 NEVER_TIME = -1200.0
 
@@ -113,6 +117,7 @@ class ZoneGroupState:
 
         self._cache_until = NEVER_TIME
         self._last_zgs = None
+        self._subscriptions = WeakSet()
 
         # Statistics
         self.total_requests = 0
@@ -121,6 +126,39 @@ class ZoneGroupState:
     def clear_cache(self):
         """Clear the cache timestamp."""
         self._cache_until = NEVER_TIME
+
+    def add_subscription(self, subscription: SubscriptionBase):
+        """Start tracking a ZoneGroupTopology subscription."""
+        if (
+            subscription.service.service_type == "ZoneGroupTopology"
+            and subscription not in self._subscriptions
+        ):
+            self._subscriptions.add(subscription)
+            _LOG.debug(
+                "Monitoring ZoneGroupTopology subscription %s on %s",
+                subscription.sid,
+                subscription.service.soco,
+            )
+
+    def remove_subscription(self, subscription: SubscriptionBase):
+        """Stop tracking a ZoneGroupTopology subscription."""
+        if subscription in self._subscriptions:
+            self._subscriptions.remove(subscription)
+            _LOG.debug(
+                "Discarded unsubscribed subscription %s from %s, %d remaining",
+                subscription.sid,
+                subscription.service.soco,
+                len(self._subscriptions),
+            )
+
+    @property
+    def has_subscriptions(self):
+        """Return True if active subscriptions are updating this ZoneGroupState."""
+        stale_subscriptions = [sub for sub in self._subscriptions if not sub.time_left]
+        for sub in stale_subscriptions:
+            _LOG.debug("Discarding stale subscription: %s", sub.sid)
+            self.remove_subscription(sub)
+        return bool(self._subscriptions)
 
     def clear_zone_groups(self):
         """Clear all known group sets."""
@@ -131,6 +169,15 @@ class ZoneGroupState:
     def poll(self, soco):
         """Poll using the provided SoCo instance and process the payload."""
         # pylint: disable=protected-access
+        if self.has_subscriptions:
+            self.total_requests += 1
+            _LOG.debug(
+                "Subscriptions (%s) still active during poll for %s, using cache",
+                len(self._subscriptions),
+                soco.ip_address,
+            )
+            return
+
         if time.monotonic() < self._cache_until:
             self.total_requests += 1
             _LOG.debug(
@@ -148,28 +195,108 @@ class ZoneGroupState:
             )
             soco = soco._satellite_parent
 
-        zgs = soco.zoneGroupTopology.GetZoneGroupState()["ZoneGroupState"]
-        self.process_payload(payload=zgs, source="poll", source_ip=soco.ip_address)
+        # On large (about 20+ players) systems, GetZoneGroupState() can cause
+        # the target Sonos player to return an HTTP 501 error, raising a
+        # SoCoUPnPException.
+        try:
+            zgs = soco.zoneGroupTopology.GetZoneGroupState()["ZoneGroupState"]
+            self.process_payload(payload=zgs, source="poll", source_ip=soco.ip_address)
+            self._cache_until = time.monotonic() + POLLING_CACHE_TIMEOUT
+            _LOG.debug("Extending ZGS cache by %ss", POLLING_CACHE_TIMEOUT)
+
+        # In the event of failure, we fall back to using a ZGT event to
+        # determine the ZGS. Fallback behaviour can be disabled by setting the
+        # config.ZGT_EVENT_FALLBACK flag to False.
+        except SoCoUPnPException as soco_upnp_exception:
+            _LOG.debug(
+                "Exception (%s) raised on 'GetZoneGroupState()'",
+                soco_upnp_exception,
+            )
+
+            if config.ZGT_EVENT_FALLBACK is False:
+                _LOG.debug("ZGT event fallback disabled (config.ZGT_EVENT_FALLBACK)")
+                raise NotSupportedException(
+                    "'GetZoneGroupState()' call fails on large Sonos systems "
+                    "and event fallback is disabled"
+                ) from soco_upnp_exception
+
+            _LOG.debug("Falling back to using a ZGT event")
+            try:
+                self.update_zgs_by_event(soco)
+            except Exception as soco_exception:
+                raise soco_exception from soco_upnp_exception
+
+    def update_zgs_by_event(self, speaker):
+        """
+        Fall back to updating the ZGS using a ZGT event.
+        Use of the 'events_twisted' module is not currently supported.
+        """
+        if config.EVENTS_MODULE.__name__ == "soco.events":
+            _LOG.debug("Updating ZGS using standard 'events' module")
+            self.update_zgs_by_event_default(speaker)
+
+        elif config.EVENTS_MODULE.__name__ == "soco.events_asyncio":
+            _LOG.debug("Updating ZGS using 'events_asyncio' module")
+            # Explicit asyncio event loop control required for Python 3.6
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(ZoneGroupState.update_zgs_by_event_asyncio(speaker))
+            asyncio.set_event_loop(None)
+            loop.close()
+            # From Python 3.7, we can just use the single statement:
+            # asyncio.run(ZoneGroupState.update_zgs_events_asyncio(speaker))
+
+        elif config.EVENTS_MODULE.__name__ == "soco.events_twisted":
+            # Future: Insert code here to handle the 'events_twisted' case
+            raise SoCoException(
+                "ZGT event fallback not yet implemented when using the "
+                "'events_twisted' module"
+            )
+
+        else:
+            # In case any additional events frameworks come along ...
+            raise SoCoException(
+                "ZGT event fallback not implemented for "
+                f"'{config.EVENTS_MODULE.__name__}' module"
+            )
+
+    def update_zgs_by_event_default(self, speaker):
+        """
+        Update the ZGS using the default events module.
+        """
+        sub = speaker.zoneGroupTopology.subscribe()
+        event = sub.events.get(timeout=1.0)
+        sub.unsubscribe()
+        zgs = event.variables.get("zone_group_state")
+        self.process_payload(payload=zgs, source="event", source_ip=speaker.ip_address)
+
+    @staticmethod
+    async def update_zgs_by_event_asyncio(speaker):
+        """
+        Update ZGS using events_asyncio. When the event is received,
+        the events_asyncio notify handler will call 'process_payload' with
+        the updated ZGS.
+        """
+        from . import events_asyncio  # pylint: disable=C0415
+
+        event_listener_is_running = events_asyncio.event_listener.is_running
+        sub = await speaker.zoneGroupTopology.subscribe()
+        await asyncio.sleep(0.25)
+        await sub.unsubscribe()
+        if not event_listener_is_running:
+            # The event listener was started as a result of our
+            # subscribe() call, so stop it
+            await events_asyncio.event_listener.async_stop()
 
     def process_payload(self, payload, source, source_ip):
         """Update using the provided XML payload."""
         self.total_requests += 1
-
-        def update_cache():
-            if source == "event":
-                timeout = EVENT_CACHE_TIMEOUT
-            else:
-                timeout = POLLING_CACHE_TIMEOUT
-            self._cache_until = time.monotonic() + timeout
-            _LOG.debug("Setting ZGS cache to %ss", timeout)
-
         tree = normalize_zgs_xml(payload)
         normalized_zgs = str(tree)
         if normalized_zgs == self._last_zgs:
             _LOG.debug(
                 "Duplicate ZGS received from %s (%s), ignoring", source_ip, source
             )
-            update_cache()
             return
 
         self.processed_count += 1
@@ -182,7 +309,6 @@ class ZoneGroupState:
         )
 
         self.update_soco_instances(tree)
-        update_cache()
         self._last_zgs = normalized_zgs
 
     def parse_zone_group_member(self, member_element):

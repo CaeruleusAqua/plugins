@@ -113,7 +113,6 @@ def show_xml(xml):
 
 
 class deprecated:
-
     """A decorator for marking deprecated objects.
 
     Used internally by SoCo to cause a warning to be issued when the object
@@ -154,7 +153,6 @@ class deprecated:
     def __call__(self, deprecated_fn):
         @functools.wraps(deprecated_fn)
         def decorated(*args, **kwargs):
-
             message = "Call to deprecated function {}.".format(deprecated_fn.__name__)
             if self.will_be_removed_in is not None:
                 message += " Will be removed in version {}.".format(

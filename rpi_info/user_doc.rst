@@ -1,5 +1,8 @@
+.. index:: Plugins; rpi_info
+.. index:: rpi_info
+
 ========
-RPi_Info
+rpi_info
 ========
 
 .. image:: webif/static/img/plugin_logo.png
@@ -10,45 +13,19 @@ RPi_Info
    :align: left
 
 Unterstützte Geräte
-~~~~~~~~~~~~~~~~~~~
+===================
 
 Raspberry Pi
 
 
 Konfiguration
--------------
+=============
 
-plugin.yaml
-~~~~~~~~~~~
-
-Bitte die Dokumentation lesen, die aus den Metadaten der plugin.yaml erzeugt wurde.
-
-
-items.yaml
-~~~~~~~~~~
-
-Bitte die Dokumentation lesen, die aus den Metadaten der plugin.yaml erzeugt wurde.
-
-
-logic.yaml
-~~~~~~~~~~
-
-Bitte die Dokumentation lesen, die aus den Metadaten der plugin.yaml erzeugt wurde.
-
-
-Funktionen
-~~~~~~~~~~
-
-Bitte die Dokumentation lesen, die aus den Metadaten der plugin.yaml erzeugt wurde.
-
-
-Beispiele
----------
-
-Hier können ausführlichere Beispiele und Anwendungsfälle beschrieben werden.
+Die Pluginparameter und die Informationen zur Item-spezifischen Konfiguration des Plugins sind
+unter :doc:`/plugins_doc/config/rpi_info` beschrieben.
 
 
 Web Interface
--------------
+=============
 
 Das Plugin stellt ein WebIF zur Verfügung, in dem alle mit dem Plugin verknüpften Items gelistet sind.

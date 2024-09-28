@@ -73,6 +73,7 @@ AUDIO_INPUT_FORMATS = {
     84934658: "Multichannel PCM 5.1",
     84934713: "Dolby 5.1",
     84934714: "Dolby Digital Plus 5.1",
+    84934718: "Dolby Multichannel PCM 5.1",
     84934721: "DTS 5.1",
 }
 
@@ -80,7 +81,6 @@ _LOG = logging.getLogger(__name__)
 
 
 class _ArgsSingleton(type):
-
     """A metaclass which permits only a single instance of each derived class
     sharing the same `_class_group` class attribute to exist for any given set
     of positional arguments.
@@ -123,7 +123,6 @@ class _ArgsSingleton(type):
 class _SocoSingletonBase(  # pylint: disable=no-init
     _ArgsSingleton("ArgsSingletonMeta", (object,), {})
 ):
-
     """The base class for the SoCo class.
 
     Uses a Python 2 and 3 compatible method of declaring a metaclass. See, eg,
@@ -167,7 +166,6 @@ def only_on_soundbars(function):
 
 # pylint: disable=R0904
 class SoCo(_SocoSingletonBase):
-
     """A simple class for controlling a Sonos speaker.
 
     For any given set of arguments to __init__, only one instance of this class
@@ -235,6 +233,7 @@ class SoCo(_SocoSingletonBase):
         is_soundbar
         is_satellite
         has_satellites
+        sub_crossover
         sub_enabled
         sub_gain
         is_subwoofer
@@ -509,7 +508,17 @@ class SoCo(_SocoSingletonBase):
 
         Only provides reliable results when called on the soundbar
         or subwoofer devices if configured in a home theater setup.
+
+        Sonos Amp devices support a directly-connected 3rd party subwoofer
+        connected over RCA. This property is always enabled for those devices.
         """
+        if not self.speaker_info:
+            self.get_speaker_info()
+
+        model_name = self.speaker_info["model_name"].lower()
+        if model_name.endswith("sonos amp"):
+            return True
+
         self.zone_group_state.poll(self)
         channel_map = self._channel_map or self._ht_sat_chan_map
         if not channel_map:
@@ -739,12 +748,17 @@ class SoCo(_SocoSingletonBase):
             self.play()
 
     @only_on_master
-    def play(self):
-        """Play the currently selected track."""
-        self.avTransport.Play([("InstanceID", 0), ("Speed", 1)])
+    def play(self, **kwargs):
+        """Play the currently selected track.
+
+        Args:
+            kwargs: additional arguments such as timeout."""
+        self.avTransport.Play([("InstanceID", 0), ("Speed", 1)], **kwargs)
 
     @only_on_master
-    def play_uri(self, uri="", meta="", title="", start=True, force_radio=False):
+    def play_uri(
+        self, uri="", meta="", title="", start=True, force_radio=False, **kwargs
+    ):
         """Play a URI.
 
         Playing a URI will replace what was playing with the stream
@@ -760,6 +774,7 @@ class SoCo(_SocoSingletonBase):
             title (str): The title to show in the player (if no meta).
             start (bool): If the URI that has been set should start playing.
             force_radio (bool): forces a uri to play as a radio stream.
+            kwargs: additional arguments such as timeout.
 
         On a Sonos controller music is shown with one of the following display
         formats and controls:
@@ -826,7 +841,7 @@ class SoCo(_SocoSingletonBase):
         )
         # The track is enqueued, now play it if needed
         if start:
-            return self.play()
+            return self.play(**kwargs)
         return False
 
     @only_on_master
@@ -1070,6 +1085,46 @@ class SoCo(_SocoSingletonBase):
                 ("InstanceID", 0),
                 ("EQType", "SurroundEnable"),
                 ("DesiredValue", int(enable)),
+            ]
+        )
+
+    @property
+    def sub_crossover(self):
+        """int: Reports the current subwoofer crossover frequency in Hz.
+
+        Only supported on Amp devices.
+        """
+        model_name = self.speaker_info["model_name"].lower()
+        if not model_name.endswith("sonos amp"):
+            return None
+
+        response = self.renderingControl.GetEQ(
+            [("InstanceID", 0), ("EQType", "SubCrossover")]
+        )
+        return int(response["CurrentValue"])
+
+    @sub_crossover.setter
+    def sub_crossover(self, frequency):
+        """Set the subwoofer crossover frequency. Only supported on Amp devices.
+
+        :param frequency: Desired subwoofer crossover frequency in Hz
+        :type frequency: int
+        """
+        model_name = self.speaker_info["model_name"].lower()
+        if not model_name.endswith("sonos amp"):
+            message = "Subwoofer crossover not supported on this device."
+            raise NotSupportedException(message)
+
+        if not 50 <= frequency <= 110:
+            raise ValueError(
+                "Invalid value, must be integer between 50 and 110 inclusive"
+            )
+
+        self.renderingControl.SetEQ(
+            [
+                ("InstanceID", 0),
+                ("EQType", "SubCrossover"),
+                ("DesiredValue", int(frequency)),
             ]
         )
 
@@ -2362,9 +2417,11 @@ class SoCo(_SocoSingletonBase):
             [
                 (
                     "ObjectID",
-                    "FV:2"
-                    if favorite_type is SONOS_FAVORITES
-                    else "R:0/{}".format(favorite_type),
+                    (
+                        "FV:2"
+                        if favorite_type is SONOS_FAVORITES
+                        else "R:0/{}".format(favorite_type)
+                    ),
                 ),
                 ("BrowseFlag", "BrowseDirectChildren"),
                 ("Filter", "*"),

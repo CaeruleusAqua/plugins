@@ -35,7 +35,7 @@ class Robot:
         self._token = token
         self._clientIDHash = 'KY4YbVAvtgB7lp8vIbWQ7zLk3hssZlhR'
         self._numberRobots = 0
-
+        self._backendOnline = False
 
         # Cleaning
         self.category = ''
@@ -44,6 +44,7 @@ class Robot:
         self.navigationMode = ''
         self.spotWidth = ''
         self.spotHeight = ''
+        self.mapId = 'unknown'
 
         # Meta
         self.name = ""
@@ -149,7 +150,7 @@ class Robot:
         responseJson = start_cleaning_response.json()
         self.logger.debug("Debug: send command response: {0}".format(start_cleaning_response.text))
         if log_message:
-            self.logger.info("Requested Info: {0}".format(start_cleaning_response.text))
+            self.logger.warning("INFO: Requested Info: {0}".format(start_cleaning_response.text))
 
         if 'result' in responseJson:
             if str(responseJson['result']) == 'ok':
@@ -158,13 +159,13 @@ class Robot:
                 self.logger.warning(f"Command returned {str(responseJson['result'])}: Retry starting with non-persistent-map")
                 return self.robot_command(command = 'start_non-persistent-map')
             else:
-                self.logger.error("Sending command failed. Result: {0}".format(str(responseJson['result']) ))
-                self.logger.error("Debug: send command response: {0}".format(start_cleaning_response.text))
+                self.logger.error(f"Sending command {command} failed. Result: {str(responseJson['result'])}")
+                self.logger.error(f"Debug: send command response: {start_cleaning_response.text}")
         else:
             if 'message' in responseJson:
-                self.logger.error("Sending command failed. Message: {0}".format(str(responseJson['message'])))
+                self.logger.error(f"Sending command {command} failed. Message: {str(responseJson['message'])}")
             if 'error' in responseJson:
-                self.logger.error("Sending command failed. Error: {0}".format(str(responseJson['error'])))
+                self.logger.error(f"Sending command {command} failed. Error: {str(responseJson['error'])}")
 
         # - NOT on Charge BASE
         return start_cleaning_response
@@ -187,6 +188,7 @@ class Robot:
 
         if self.__secretKey == '':
             self.logger.warning("Robot: Still no valid secret key. Aborting update fct.")
+            self._backendOnline = False
             return 'error'
 
         #self.logger.debug("Returned secret key is {0}".format(self.__secretKey))
@@ -201,20 +203,33 @@ class Robot:
                                                                      'Date': self.__get_current_date(),
                                                                      'Accept': 'application/vnd.neato.nucleo.v1',
                                                                      'Authorization': 'NEATOAPP ' + h.hexdigest()}, timeout=self._timeout, verify=self._verifySSL )
- 
+        except requests.exceptions.ConnectionError as e:
+            self.logger.warning("Robot: Connection error: %s" % str(e))
+            self._backendOnline = False
+            return 'error'
+        except requests.exceptions.Timeout as e:
+            self.logger.warning("Robot: Timeout exception during cloud state request: %s" % str(e))
+            self._backendOnline = False
+            return 'error'
         except Exception as e:
             self.logger.error("Robot: Exception during cloud state request: %s" % str(e))
+            self._backendOnline = False
             return 'error'
 
         statusCode = robot_cloud_state_response.status_code
         if statusCode == 200:
             self.logger.debug("Sending cloud state request successful")
+            self._backendOnline = True
         elif statusCode == 403:
             self.logger.debug("Sending cloud state request returned: Forbidden. Aquire new session key.")
         elif statusCode == 404:
-            self.logger.error("Robot is not reachable for backend. Is robot online?")
+            self.logger.warning("Robot is not reachable for backend. Is robot online?")
+            return 'error'
+        elif statusCode == 500:
+            self.logger.warning(f"Internal Backend Server Error 500, Optional message: {robot_cloud_state_response.text}")
+            return 'error'
         else:
-            self.logger.error("Sending cloud state request error: {0}, msg: {1}".format(statusCode,robot_cloud_state_response.text ))
+            self.logger.error(f"Sending cloud state request error: {statusCode}, msg: {robot_cloud_state_response.text}")
             return 'error'
 
         response = robot_cloud_state_response.json()
@@ -282,6 +297,8 @@ class Robot:
             self.navigationMode = response['cleaning']['navigationMode']
             self.spotWidth = response['cleaning']['spotWidth']
             self.spotHeight = response['cleaning']['spotHeight']
+            if 'mapId' in response['cleaning']:
+                self.mapId = response['cleaning']['mapId']
 
         return response
 
@@ -358,7 +375,7 @@ class Robot:
         try:
             locale.setlocale(locale.LC_TIME, 'en_US.utf8')
         except locale.Error as e:
-            self.logger.error("Robot: Locale setting Error. Please install locale en_US.utf8: "+e)
+            self.logger.error("Robot: Locale setting error. Please install locale en_US.utf8: "+e)
             return None
         date = time.strftime('%a, %d %b %Y %H:%M:%S', time.gmtime()) + ' GMT'
         locale.setlocale(locale.LC_TIME, saved_locale)

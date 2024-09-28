@@ -27,7 +27,7 @@
 import asyncio
 import threading
 from concurrent.futures import CancelledError
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import json
 
@@ -55,12 +55,10 @@ class Husky2AutomowerSession(session.AutomowerSession):
         else:
             session._LOGGER.debug("Refresh access token doing relogin")
             self.shLogger.debug("Refresh access token doing relogin")
-            await self.close()
-            self.shLogger.debug("Closed old session")
+            await asyncio.sleep(5)
             await self.logincc(self.client_secret)
             self.shLogger.debug("Logged in successfully")
-            await self.connect()
-            self.shLogger.debug("Connected successfully")
+            await asyncio.sleep(5)
 
 
 class Husky2(SmartPlugin):
@@ -73,7 +71,7 @@ class Husky2(SmartPlugin):
     are already available!
     """
 
-    PLUGIN_VERSION = '2.1.0'  # (must match the version specified in plugin.yaml), use '1.0.0' for your initial plugin Release
+    PLUGIN_VERSION = '2.1.1'
 
     ITEM_INFO = "husky_info"
     ITEM_CONTROL = "husky_control"
@@ -235,6 +233,9 @@ class Husky2(SmartPlugin):
         self.historylength = int(self.get_parameter_value('historylength'))
         self.maxgpspoints = int(self.get_parameter_value('maxgpspoints'))
 
+        # poll is only additional, because normal state updates are recieved by the websocket connection of the api
+        self.poll_cycle = 600  # call every 10 min to make sure the monthly api call limit of 10000 gets not exceeded
+
         self.token = None
         self.tokenExp = 0
 
@@ -282,7 +283,7 @@ class Husky2(SmartPlugin):
         Run method for the plugin
         """
         # if you need to create child threads, do not make them daemon = True!
-        # They will not shutdown properly. (It's a python bug)
+        # They will not shut down properly. (It's a python bug)
         self.logger.debug("Run method called")
 
         try:
@@ -316,7 +317,8 @@ class Husky2(SmartPlugin):
                         self.asyncLoop.run_until_complete(task)
                     except CancelledError:
                         pass
-
+            except AttributeError:
+                self.logger.debug("No other running async Tasks to cancel")
             except Exception as e:
                 self.logger.warning(f"husky2_thread: finally *2 - Exception {e}")
             try:
@@ -329,11 +331,16 @@ class Husky2(SmartPlugin):
         self.alive = True
         self.logger.debug("Init finished, husky2 plugin is running")
 
+        dt = self.shtime.now() + timedelta(seconds=self.poll_cycle)
+        self.scheduler_add('poll_husky_device_' + self.instance,
+                           self.poll_device, cycle=self.poll_cycle, prio=5, next=dt)
+
     def stop(self):
         """
         Stop method for the plugin
         """
         self.logger.debug("Stop method called. Shutting down Thread...")
+        self.scheduler_remove('poll_husky_device_' + self.instance)
         self.asyncLoop.call_soon_threadsafe(self.asyncLoop.stop)
         time.sleep(2)
         try:
@@ -438,7 +445,7 @@ class Husky2(SmartPlugin):
             # and only, if the item has not been changed by this this plugin:
             item_value = "{0}".format(item())
             self.logger.info(
-                "Update item: {0}, item has been changed outside this plugin to value={1}".format(item.id(),
+                "Update item: {0}, item has been changed outside this plugin to value={1}".format(item.property.path,
                                                                                                   item_value))
             if self.has_iattr(item.conf, self.ITEM_CONTROL):
                 self.logger.debug(
@@ -463,6 +470,10 @@ class Husky2(SmartPlugin):
         if 'message' in self._items_state:
             for item in self._items_state['message']:
                 item(txt, self.get_shortname())
+
+    def poll_device(self):
+        self.logger.debug("Poll new status")
+        asyncio.run_coroutine_threadsafe(self.update_worker(), self.asyncLoop)
 
     def data_callback(self, status):
         """
@@ -492,7 +503,8 @@ class Husky2(SmartPlugin):
 
         posindex = -1
         for gpsindex, gpspoint in enumerate(data['attributes']['positions']):
-            if (gpspoint['longitude'] == self.mowerGpspoints.get_last()[0]) and (gpspoint['latitude'] == self.mowerGpspoints.get_last()[1]):
+            if (gpspoint['longitude'] == self.mowerGpspoints.get_last()[0]) and (
+                    gpspoint['latitude'] == self.mowerGpspoints.get_last()[1]):
                 posindex = gpsindex - 1
                 break
             elif gpsindex >= self.maxgpspoints:
@@ -664,6 +676,12 @@ class Husky2(SmartPlugin):
             self.logger.error("'{0}' not in available commands: {1}".format(cmd, commands.keys()))
         return
 
+    async def update_worker(self):
+        newstatus = await self.apiSession.get_status()
+        self.apiSession.action
+        self.data_callback(newstatus)
+        return
+
     # ------------------------------------------
     #    Webinterface methods of the plugin
     # ------------------------------------------
@@ -730,7 +748,7 @@ class Husky2(SmartPlugin):
         for data in self.mowerTimestamp.get_list():
             min = int((now - (data / 1000.0)) / 60.0)
             sec = int((now - (data / 1000.0)) % 60.0)
-            deltas.append(f"{min}:{sec}")
+            deltas.append(f"{min}:{sec:02d}")
         return deltas
 
     def getErrormessages(self):
@@ -822,9 +840,11 @@ class WebInterface(SmartPluginWebIf):
         """
         tmpl = self.tplenv.get_template('index.html')
 
+        items_count = len(self.plugin._items_control) + len(self.plugin._items_state)
+
         # add values to be passed to the Jinja2 template eg: tmpl.render(p=self.plugin, interface=interface, ...)
-        return tmpl.render(p=self.plugin, device_count=self.plugin.mowerCount, items_control=self.plugin._items_control,
-                           items_state=self.plugin._items_state)
+        return tmpl.render(p=self.plugin, device_count=self.plugin.mowerCount, items_count=items_count,
+                           items_control=self.plugin._items_control, items_state=self.plugin._items_state)
 
     @cherrypy.expose
     def mower_park(self):

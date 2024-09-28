@@ -19,14 +19,12 @@
 #  You should have received a copy of the GNU General Public License
 #  along with this plugin. If not, see <http://www.gnu.org/licenses/>.
 #########################################################################
+from . import StateEngineLogger
 import datetime
 from ast import literal_eval
-from lib.item import Items
-from lib.item.item import Item
 import re
+from lib.item.items import Items
 
-itemsApi = Items.get_instance()
-__itemClass = Item
 
 # General class for everything that is below the SeItem Class
 # This class provides some general stuff:
@@ -37,41 +35,45 @@ class SeItemChild:
     # abitem: parent SeItem instance
     def __init__(self, abitem):
         self._abitem = abitem
+        if self._abitem is None:
+            self.__logger = StateEngineLogger.SeLoggerDummy()
+        else:
+            self.__logger = self._abitem.logger
         self.se_plugin = abitem.se_plugin
         self._sh = abitem.sh
         self._shtime = abitem.shtime
 
     # wrapper method for logger.info
     def _log_info(self, text, *args):
-        self._abitem.logger.info(text, *args)
+        self.__logger.info(text, *args)
 
     # wrapper method for logger.debug
     def _log_develop(self, text, *args):
-        self._abitem.logger.develop(text, *args)
+        self.__logger.develop(text, *args)
 
     # wrapper method for logger.debug
     def _log_debug(self, text, *args):
-        self._abitem.logger.debug(text, *args)
+        self.__logger.debug(text, *args)
 
     # wrapper method for logger.warning
     def _log_warning(self, text, *args):
-        self._abitem.logger.warning(text, *args)
+        self.__logger.warning(text, *args)
 
     # wrapper method for logger.error
     def _log_error(self, text, *args):
-        self._abitem.logger.error(text, *args)
+        self.__logger.error(text, *args)
 
     # wrapper method for logger.exception
     def _log_exception(self, msg, *args, **kwargs):
-        self._abitem.logger.exception(msg, *args, **kwargs)
+        self.__logger.exception(msg, *args, **kwargs)
 
     # wrapper method for logger.increase_indent
     def _log_increase_indent(self, by=1):
-        self._abitem.logger.increase_indent(by)
+        self.__logger.increase_indent(by)
 
     # wrapper method for logger.decrease_indent
     def _log_decrease_indent(self, by=1):
-        self._abitem.logger.decrease_indent(by)
+        self.__logger.decrease_indent(by)
 
 
 # Find a certain item below a given item.
@@ -98,6 +100,8 @@ def get_last_part_of_item_id(item):
 
 
 def parse_relative(evalstr, begintag, endtags):
+    if begintag == '' and endtags == '':
+        return evalstr
     if evalstr.find(begintag+'.') == -1:
         return evalstr
     pref = ''
@@ -117,7 +121,7 @@ def parse_relative(evalstr, begintag, endtags):
         rel = rest[:rest.find(endtag)]
         rest = rest[rest.find(endtag)+len(endtag):]
         if 'property' in endtag:
-            rest1 = re.split('( |\+|\-|\*|\/)', rest, 1)
+            rest1 = re.split('([- +*/])', rest, 1)
             rest = ''.join(rest1[1:])
             pref += "se_eval.get_relative_itemproperty('{}', '{}')".format(rel, rest1[0])
         elif '()' in endtag:
@@ -198,7 +202,10 @@ def cast_str(value):
     if isinstance(value, str):
         return value
     else:
-        raise ValueError("Can't cast {0} to str!".format(value))
+        try:
+            return str(value)
+        except Exception:
+            raise ValueError("Can't cast {0} to str!".format(value))
 
 
 # cast a value as list. Throws ValueError if cast is not possible
@@ -250,25 +257,42 @@ def cast_time(value):
 # smarthome: instance of smarthome.py base class
 # base_item: base item to search in
 # attribute: name of attribute to find
-def find_attribute(smarthome, base_item, attribute, recursion_depth=0):
-    # 1: parent of given item could have attribute
-    parent_item = base_item.return_parent()
-    try:
-        _parent_conf = parent_item.conf
-        if parent_item is not None and attribute in _parent_conf:
-            return parent_item.conf[attribute]
-    except Exception:
-        return None
-
-    # 2: if item has attribute "se_use", get the item to use and search this item for required attribute
-    if "se_use" in base_item.conf:
-        if recursion_depth > 5:
-            return None
-        use_item = itemsApi.return_item(base_item.conf.get("se_use"))
-        if use_item is not None:
-            result = find_attribute(smarthome, use_item, attribute, recursion_depth + 1)
+def find_attribute(smarthome, state, attribute, recursion_depth=0, use=None):
+    if isinstance(state, list):
+        for element in state:
+            result = find_attribute(smarthome, element, attribute, recursion_depth)
             if result is not None:
                 return result
+        return None
+
+    # 1: parent of given item could have attribute
+    try:
+        # if state is state object, get the item and se_use information
+        base_item = state.state_item
+        if use is None:
+            use = state.use.get()
+    except Exception:
+        # if state is a standard item (e.g. evaluated by se_use, just take it as it is
+        base_item = state
+        use = None
+    parent_item = base_item.return_parent()
+    if parent_item == Items.get_instance():
+        pass
+    else:
+        try:
+            _parent_conf = parent_item.conf
+            if parent_item is not None and attribute in _parent_conf:
+                return parent_item.conf[attribute]
+        except Exception:
+            return None
+
+    # 2: if state has attribute "se_use", get the item to use and search this item for required attribute
+    if use is not None:
+        if recursion_depth > 5:
+            return None
+        result = find_attribute(smarthome, use, attribute, recursion_depth + 1)
+        if result is not None:
+            return result
 
     # 3: nothing found
     return None
@@ -279,14 +303,58 @@ def find_attribute(smarthome, base_item, attribute, recursion_depth=0):
 # splitchar: where to split
 # returns: Parts before and after split, whitespaces stripped
 def partition_strip(value, splitchar):
-    if isinstance(value, list):
-        raise ValueError("You can not use list entries!")
+    if not isinstance(value, str):
+        raise ValueError("value has to be a string!")
     elif value.startswith("se_") and splitchar == "_":
         part1, __, part2 = value[3:].partition(splitchar)
         return "se_" + part1.strip(), part2.strip()
     else:
         part1, __, part2 = value.partition(splitchar)
         return part1.strip(), part2.strip()
+
+
+# return list representation of string
+# value: list as string
+# returns: list or original value
+def convert_str_to_list(value, force=True):
+    if isinstance(value, str) and (value[:1] == '[' and value[-1:] == ']'):
+        value = value.strip("[]")
+    if isinstance(value, str) and "," in value:
+        try:
+            elements = re.findall(r"'([^']+)'|([^,]+)", value)
+            flattened_elements = [element[0] if element[0] else element[1] for element in elements]
+            formatted_str = "[" + ", ".join(
+                ["'" + element.strip(" '\"") + "'" for element in flattened_elements]) + "]"
+            return literal_eval(formatted_str)
+        except Exception as ex:
+            raise ValueError("Problem converting string to list: {}".format(ex))
+    elif isinstance(value, list) or force is False:
+        return value
+    else:
+        return [value]
+
+
+# return dict representation of string
+# value: OrderedDict as string
+# returns: OrderedDict or original value
+def convert_str_to_dict(value):
+    if isinstance(value, str) and value.startswith("["):
+        value = re.split('(, (?![^(]*\)))', value.strip(']['))
+        value = [s for s in value if s != ', ']
+        result = []
+        for s in value:
+            m = re.match(r'^OrderedDict\((.+)\)$', s)
+            if m:
+                result.append(dict(literal_eval(m.group(1))))
+            else:
+                result.append(literal_eval(s))
+        value = result
+    else:
+        return value
+    try:
+        return literal_eval(value)
+    except Exception as ex:
+        raise ValueError("Problem converting string to OrderedDict: {}".format(ex))
 
 
 # return string representation of eval function
@@ -316,17 +384,19 @@ def get_eval_name(eval_func):
 # source: source
 # item: item being updated
 # eval_type: update or change
-def get_original_caller(elog, caller, source, item=None, eval_keyword=['Eval'], eval_type='update'):
+def get_original_caller(smarthome, elog, caller, source, item=None, eval_keyword=None, eval_type='update'):
+    if eval_keyword is None:
+        eval_keyword = ['Eval']
     original_caller = caller
     original_item = item
     if isinstance(source, str):
         original_source = source
     else:
         original_source = "None"
-    while original_caller in eval_keyword:
-        original_item = itemsApi.return_item(original_source)
+    while partition_strip(original_caller, ":")[0] in eval_keyword:
+        original_item = smarthome.return_item(original_source)
         if original_item is None:
-            elog.warning("get_caller({0}, {1}): original item not found", caller, source)
+            elog.info("get_caller({0}, {1}): original item not found", caller, source)
             break
         original_manipulated_by = original_item.property.last_update_by if eval_type == "update" else \
             original_item.property.last_change_by

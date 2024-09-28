@@ -45,7 +45,7 @@ class Rtr2(SmartPlugin):
     the update functions for the items
     """
 
-    PLUGIN_VERSION = '2.0.0'    # (must match the version specified in plugin.yaml), use '1.0.0' for your initial plugin Release
+    PLUGIN_VERSION = '2.2.0'    # (must match the version specified in plugin.yaml), use '1.0.0' for your initial plugin Release
 
     _rtr = {}  # dict containing data of the rtrs. Key is the attribute rtr2_id
 
@@ -163,10 +163,13 @@ class Rtr2(SmartPlugin):
             if self._rtr.get(rtr_id, None) is None:
                 # Create a new rtr
                 parent_item = item.return_parent()
+                temp_settings = []
+                controller_settings = []
                 if self.has_iattr(parent_item.conf, 'rtr2_settings'):
-                    self._rtr[rtr_id] = Rtr_object(self, self.get_iattr_value(parent_item.conf, 'rtr2_settings'))
-                else:
-                    self._rtr[rtr_id] = Rtr_object(self, [])     # use plugin parameters as defaults
+                    temp_settings = self.get_iattr_value(parent_item.conf, 'rtr2_settings')
+                if self.has_iattr(parent_item.conf, 'rtr2_controller_settings'):
+                    controller_settings = self.get_iattr_value(parent_item.conf, 'rtr2_controller_settings')
+                self._rtr[rtr_id] = Rtr_object(self, temp_settings, controller_settings)
                 self._rtr[rtr_id].id = rtr_id
                 self._rtr[rtr_id].valve_protect = self.default_valve_protect
 
@@ -246,7 +249,7 @@ class Rtr2(SmartPlugin):
         :param dest: if given it represents the dest
         """
         if self.alive and caller != self.get_shortname():
-            #self.logger.warning(f"update_item: item={item.id()} - value={item()}")
+            #self.logger.warning(f"update_item: item={item.property.path} - value={item()}")
             rtr_id = self.get_iattr_value(item.conf, 'rtr2_id')
             rtr_func = self.get_iattr_value(item.conf, 'rtr2_function')
             self._rtr[rtr_id].set_mode(rtr_func, item())

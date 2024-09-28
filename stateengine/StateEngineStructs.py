@@ -19,14 +19,13 @@
 #  along with this plugin. If not, see <http://www.gnu.org/licenses/>.
 #########################################################################
 from . import StateEngineStruct
-from lib.item import Items
 
 global_struct = {}
 __allstructs = []
 
 
 def create(_abitem, struct):
-    _find_result = next((item for item in __allstructs if item["name"] == struct), False)
+    _find_result = next((item for item in __allstructs if item["name"] == struct), {})
     if not _find_result:
         created_struct = StateEngineStruct.SeStructMain(_abitem, struct, global_struct)
         __allstructs.append({'name': struct, 'struct': created_struct})

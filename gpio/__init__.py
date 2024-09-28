@@ -35,7 +35,7 @@ class GPIO(SmartPlugin, Utils):
     Main class of the plugin.
     '''
 
-    PLUGIN_VERSION = '1.5.2'
+    PLUGIN_VERSION = '1.5.4'
     ALLOW_MULTIINSTANCE = False
 
     def __init__(self, sh):
@@ -326,11 +326,11 @@ class GPIO(SmartPlugin, Utils):
         :param item:
         :param payload:
         """
-        if not self._item_values[in_out].get(item.id()):
-            self._item_values[in_out][item.id()] = {}
-        self._item_values[in_out][item.id()]['pin'] = pin
+        if not self._item_values[in_out].get(item.property.path):
+            self._item_values[in_out][item.property.path] = {}
+        self._item_values[in_out][item.property.path]['pin'] = pin
         if isinstance(payload, bool):
-            self._item_values[in_out][item.id()]['value'] = str(payload)
+            self._item_values[in_out][item.property.path]['value'] = str(payload)
         else:
-            self._item_values[in_out][item.id()]['value'] = payload
+            self._item_values[in_out][item.property.path]['value'] = payload
         return

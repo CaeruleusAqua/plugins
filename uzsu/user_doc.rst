@@ -75,7 +75,14 @@ Ab *smarthomeNG 1.6* ist das Anlegen der nötigen Items via ``struct`` besonders
 SmartVISU
 =========
 
-Das UZSU Plugin wird durch die smartVISU ab Version 2.9 sowohl in Form eines Popups als auch einer grafischen Darstellung mittels *device.uzsu Widget* unterstützt.
+Das UZSU Plugin wird durch die smartVISU ab Version 2.9 sowohl in Form eines Popups als auch einer grafischen Darstellung mittels *device.uzsu Widget* unterstützt. Zeitserien sind ebenfalls über die SmartVISU abbildbar.
+Außerdem ist es möglich, die Struct Items "next.value" und "next.time" zu nutzen, um einen Tooltip mit der nächsten Ausführung anzuzeigen.
+
+.. code-block:: html
+
+    {{ device.uzsuicon('uzsu1','test.varuzsua.uzsu') }}
+    {{ basic.print('',['test.varuzsua.uzsu.next.time','test.varuzsua.uzsu .next.value'],'text', '"Nächste Schaltzeit: "+VAR1+" Wert: "+VAR2', '', '', 'uzsu1', 'tooltip') }}
+
 Bei Problemen bitte das entsprechende Supportforum konsultieren. Es wird empfohlen, die Visualisierung für das Einstellen der UZSU zu verwenden.
 
 
@@ -103,7 +110,7 @@ wenn die sonnenbasierte Schaltung über diese Grenzwerte hinaus berechnet werden
 Zeitserie
 ---------
 
-Für wiederkehrende Schaltungen können auch Serien angelegt werden. Dabei ist ein Startzeitpunkt und ein Intervall zu definieren. Das Ende kann entweder über einen Zeitpunkt oder die Anzahl Wiederholungen definiert werden. Start- und Endzeitpunkte können wie beir normalen UZSU auch sonnenstandsabhängig deklariert werden.
+Für wiederkehrende Schaltungen können auch Serien angelegt werden. Dabei ist ein Startzeitpunkt und ein Intervall zu definieren. Das Ende kann entweder über einen Zeitpunkt oder die Anzahl Wiederholungen definiert werden. Start- und Endzeitpunkte können wie bei der normalen UZSU auch sonnenstandsabhängig deklariert werden.
 
 
 Interpolation
@@ -130,10 +137,12 @@ Pluginfunktionen
 ================
 
 Detaillierte Informationen zu den Funktionen des Plugins sind unter :doc:`/plugins_doc/config/uzsu` zu finden.
+Sämtliche Pluginfunktionen funktionieren auch als Itemfunktionen für UZSU Items. Dabei muss beim Funktionsaufruf das Item nicht angegeben werden.
+Beispiel: Die Pluginfunktion sh.uzsu.activate(True, sh.test.uzsu) ist identisch mit dem Aufruf sh.test.uzsu.activate(True)
 
 
-Webinterface
-============
+Web Interface
+=============
 
 Das Webinterface bietet folgende Informationen:
 
@@ -157,7 +166,7 @@ Das Webinterface bietet folgende Informationen:
 
 -  **dict**: Durch Klicken auf das Plus am Beginn jeder Zeile wird das gesamte Dictionary einer UZSU angezeigt.
 
-.. image:: uzsu_webif.png
+.. image:: assets/uzsu_webif.png
    :height: 1616px
    :width: 3324px
    :scale: 25%
@@ -186,7 +195,7 @@ Datenformat
 
 Jedes USZU Item wird als dict-Typ gespeichert. Jeder Listen-Eintrag ist wiederum ein dict, das aus Key und Value-Paaren besteht. Im Folgenden werden die möglichen Dictionary-Keys gelistet. Nutzt man das USZU Widget der SmartVISU, muss man sich um diese Einträge nicht kümmern.
 
--  **dtstart**: Ein datetime Objekt, das den exakten Startwert für den rrule Algorithmus besimmt. Dieser Parameter ist besonder bei FREQ=MINUTELY rrules relevant.
+-  **dtstart**: Ein datetime Objekt, das den exakten Startwert für den rrule Algorithmus bestimmt. Dieser Parameter ist besonders bei FREQ=MINUTELY rrules relevant.
 
 -  **value**: Der Wert, auf den das uzsu_item gesetzt werden soll.
 

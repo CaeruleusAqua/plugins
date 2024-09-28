@@ -1,0 +1,586 @@
+{% extends "base_plugin.html" %}
+
+{% set logo_frame = false %}
+{% set row_count = true %}
+{% set initial_update = true %}
+<!-- set update_interval to a value > 0 (in milliseconds) to enable periodic data updates -->
+{% set update_interval = [(((10 * item_count) / 1000) | round | int) * 1000, 5000]|max %}
+
+<!-- Define language -->
+{% set language = p.get_sh().get_defaultlanguage() %}
+{% if language not in ['en','de'] %}
+    {% set language = 'de' %}
+{% endif %}
+
+<!-- Additional styles go into this block. Examples are for datatables -->
+{% block pluginstyles %}
+<style>
+  table th.item {
+    width: 350px;
+  }
+  table th.type {
+    width: 50px;
+  }
+  table th.attribute {
+    width: 220px;
+  }
+  table th.cycle {
+    width: 150px;
+  }
+  table th.init {
+    width: 100px;
+  }
+  table th.value {
+    width: 100px;
+  }
+  table th.last {
+    width: 150px;
+  }
+    table th.aktion {
+    width: 100px;
+  }
+  table th.dict {
+    width: 150px;
+  }
+  table th.count {
+    width: 50px;
+  }
+  table th.content {
+    width: 500px;
+  }
+  table td.active_item {
+    max-width: 250px;
+    width: 200px;
+    min-width:150px!important;
+  }
+  .shng_effect_highlight {
+    background-color: #FFFFE0;
+  }
+  .shng_effect_standard {
+    background-color: none;
+  }
+  button.actionbutton {
+    width: 32px;
+  }
+</style>
+{% endblock pluginstyles %}
+
+<!-- Additional script tag for plugin specific javascript code go into this block -->
+{% block pluginscripts %}
+<script>
+  function togglePlayPause(id, suspended) {
+    const escapedId = $.escapeSelector(id);
+    const buttonElement = $("#" + escapedId);
+    const icon = buttonElement.find('i');
+    recalcElement = $("#" + escapedId.replace(/_button_playpause$/, "_button_recalc"));
+
+    if (suspended == "true") {
+      // Change to pause icon
+      recalcElement.prop("disabled", true);
+      if (id.startsWith("plugin"))
+        buttonElement.val(id.replace(/_button_playpause$/, "") + ":suspend_plugin_calculation,False");
+      else
+        buttonElement.val(id.replace(/_button_playpause$/, "") + ":suspend_item_calculation,False");
+      icon.removeClass('fa-play').addClass('fa-pause');
+      buttonElement.attr('title', "{{ _('Berechnung aktivieren') }}");
+      buttonElement.removeClass("btn btn-outline-success").addClass("btn actionbutton btn-outline-dark");
+    } else {
+      // Change to play icon
+      if (id.startsWith("plugin"))
+        buttonElement.val(id.replace(/_button_playpause$/, "") + ":suspend_plugin_calculation,True");
+      else
+        buttonElement.val(id.replace(/_button_playpause$/, "") + ":suspend_item_calculation,True");
+      recalcElement.prop("disabled", false);
+      icon.removeClass('fa-pause').addClass('fa-play');
+      buttonElement.attr('title', "{{ _('Berechnung deaktivieren') }}");
+      buttonElement.removeClass("btn actionbutton btn-outline-dark").addClass("btn btn-outline-success");
+    }
+
+    // Your additional logic here
+  }
+
+  function updateButton(buttonElement, success) {
+      const originalHTML = buttonElement.html();
+      if (success == "btn-success")
+        buttonElement
+          .prop("disabled", true)
+          .html('<i class="fas fa-check"></i>')
+          .addClass(success);
+      else
+        buttonElement
+          .prop("disabled", true)
+          .html('<i class="fas fa-times"></i>')
+          .addClass(success);
+
+      // After 2 seconds, revert the button to its original state
+      setTimeout(function() {
+        buttonElement
+          .prop("disabled", false)
+          .html(originalHTML)
+          .removeClass(success);
+      }, 2000);
+  }
+</script>
+
+<script>
+	function handleUpdatedData(response, dataSet=null) {
+		if (dataSet === 'devices_info' || dataSet === null) {
+			var objResponse = JSON.parse(response);
+			myProto = document.getElementById(dataSet);
+			for (item in objResponse['items']) {
+			    value = String(objResponse['items'][item]['value'])
+
+                var length = 40;
+                var new_value = value.length > length ?
+                    value.substring(0, length - 3) + " ..." :
+                    value;
+
+                shngInsertText(item+'_value', Math.round(new_value, 2), 'maintable', 5);
+                shngInsertText(item+'_last_update', objResponse['items'][item]['last_update'], 'maintable');
+                shngInsertText(item+'_last_change', objResponse['items'][item]['last_change'], 'maintable');
+            }
+
+            item_count = String(objResponse['queue_length']) + ' Items';
+            if (objResponse['queue_length'] == 0)
+              recalc_button(false);
+            else {
+              recalc_button(true);
+            }
+            shngInsertText('queue_length', item_count);
+            shngInsertText('active_queue_item', objResponse['active_queue_item']);
+
+        togglePlayPause("plugin_button_playpause", objResponse['plugin_suspended'].toString());
+		}
+
+      if ($("#logging").length > 0){
+        document.getElementById('debug_parse').checked = objResponse['debug_log']['parse'];
+        document.getElementById('debug_execute').checked = objResponse['debug_log']['execute'];
+        document.getElementById('debug_ondemand').checked = objResponse['debug_log']['ondemand'];
+        document.getElementById('debug_onchange').checked = objResponse['debug_log']['onchange'];
+        document.getElementById('debug_prepare').checked = objResponse['debug_log']['prepare'];
+        document.getElementById('debug_sql').checked = objResponse['debug_log']['sql'];
+      }
+	}
+</script>
+
+<script>
+    $(document).ready( function () {
+
+      // Handler für Formular - das "submit"-Element (Senden) wird abgefangen
+      $("#button_pressed").submit(function(e) {
+
+        // keine HTML-Aktion ausführen (z.B. Formular senden)
+        e.preventDefault();
+        let value = $("#button").val();
+        const id = $("#button_id").val();
+        const escapedId = $.escapeSelector(id);
+        const buttonElement = $("#" + escapedId);
+        console.log('Sending db_addon command for ' + value);
+        // die Kennung des gedrückten Buttons per AJAX senden
+        $.post('submit', {item: value}, function(data) {
+          console.log("Return value from plugin: id=" + id + ", data=" + data);
+          if (id.endsWith("_playpause"))
+            togglePlayPause(id, data.toString());
+          else {
+            if (data === "true")
+              updateButton(buttonElement, "btn-success");
+            else
+              updateButton(buttonElement, "btn-danger");
+          }
+
+        }).fail(function(jqXHR, textStatus, errorThrown) {
+          // Error callback
+          console.error("AJAX request failed:", textStatus, errorThrown);
+          updateButton(buttonElement, "btn-danger");
+        });
+        return false ;
+      });
+
+	  $(window).trigger('datatables_defaults');
+      try {
+        maintable = $('#maintable').DataTable( {
+          columnDefs: [
+          { responsivePriority: 1, targets: 1 },
+        { responsivePriority: 2, targets: -1 },
+          {
+            title: '',
+            targets: [0], "className": ""
+  				},
+          {
+            title: '{{ _('Item') }}',
+            targets: [1], "className": "item"
+  				},
+          {
+            title: '{{ _('Typ') }}',
+            targets: [2], "className": "type"
+  				},
+          {
+            title: '{{ _('AddOn Attribute') }}',
+            targets: [3], "className": "attribute"
+  				},
+          {
+            title: '{{ _('Update Cycle') }}',
+            targets: [4], "className": "cycle"
+          },
+          {
+            title: '{{ _('Run on init') }}',
+            targets: [5], "className": "init"
+          },
+          {
+            title: '{{ _('Wert') }}',
+            targets: [6], "className": "truncate value"
+          },
+          {
+            title: '{{ _('Letztes Update') }}',
+            targets: [7], "className": "last"
+          },
+          {
+            title: '{{ _('Letzter Change') }}',
+            targets: [8], "className": "last"
+          },
+          {
+            title: '{{ _('Aktionen') }}',
+            targets: [9], "className": "aktion"
+          }].concat($.fn.dataTable.defaults.columnDefs)});
+
+        {% if maintenance %}
+          mtable2 = $('#mtable2').DataTable( {
+            columnDefs: [
+            {
+              title: '',
+              targets: [0], "className": ""
+            },
+            {
+              title: '{{ _('dict/list') }}',
+              targets: [1], "className": "dict"
+            },
+            {
+              title: '{{ _('content') }}',
+              targets: [2], "className": "content"
+            }].concat($.fn.dataTable.defaults.columnDefs)});
+        {% endif %}
+      }
+      catch (e) {
+        console.warn("Datatable JS not loaded, showing standard table without reorder option " + e);
+      }
+
+    });
+</script>
+
+<script>
+  function recalc_button(onoff)
+  {
+    const recalc_button = document.querySelector('#recalc_icon');
+    if (onoff == true) {
+      //recalc_button.setAttribute("disabled", "disabled");
+      recalc_button.classList.add('fa-1x');
+      recalc_button.classList.add('fa-spin');
+    }
+    else {
+      //recalc_button.removeAttribute("disabled");
+      recalc_button.classList.remove('fa-1x');
+      recalc_button.classList.remove('fa-spin');
+    }
+  }
+</script>
+
+<script>
+  function checkbox(log, value)
+  {
+    console.log('debug_log_option_'+log+'_'+value)
+    jQuery.get('debug_log_option_'+log+'_'+value)
+  }
+</script>
+
+{% endblock pluginscripts %}
+
+
+{% block headtable %}
+<table class="table table-striped table-hover" style="min-width:600px;">
+	<tbody>
+		<tr>
+			<td class="py-1" width="150px"><strong>{{ _('Verbunden') }}</strong></td>
+			<td class="py-1" width="500px">{% if p._db._connected %}{{ _('Ja') }}{% else %}{{ _('Nein') }}{% endif %}</td>
+			<td class="py-1" width="150px"><strong>{{ _('Treiber') }}</strong></td>
+			<td class="py-1">{{ p.db_driver }}</td>
+			<td class="py-1" width="150px"><strong>{{ _('Startup Delay') }}</strong></td>
+			<td class="py-1">{{ (p.startup_run_delay) }}s</td>
+		</tr>
+		{% set first = True %}
+        {% if p._db %}
+            {% for key, value in p._db._params.items() %}
+                {% if loop.index % 4 == 0 %}
+                    <tr>
+                    {% endif %}
+                        {% if key != "passwd" %}
+                            <td class="py-1"><strong>{{ key }}</strong></td><td class="py-1">{{ value }}</td>
+                        {% else %}
+                            <td class="py-1"><strong>{{ key }}</strong></td><td class="py-1">{% for letter in value %}*{% endfor %}</td>
+                        {% endif %}
+                        {% if loop.index % 3 > 0 and loop.last %}
+                            <td class="py-1" colspan="{{ loop.index % 3 }}"></td>
+                        {% endif %}
+                    {% if loop.index % 4 == 0 and not first %}
+                    </tr>
+                {% endif %}
+            {% endfor %}
+        {% endif %}
+        <tr>
+            <td class="py-1"><strong>{{ _('Item in Berechnung') }}</strong></td>
+            <td class="py-1 active_item truncate" id="active_queue_item">{{ p.active_queue_item }}</td>
+            <td class="py-1"><strong>{{ _('Arbeitsvorrat') }}</strong></td>
+            <td class="py-1" id="queue_length">{{ p.queue_backlog }} {{ _('Items') }} </td>
+            <td class="py-1"><strong>{{ _('LogLevel') }}</strong></td>
+            <td class="py-1">
+                {{ p.log_level }}
+                {% if p.log_level == 10 %}
+                    {{'    ||     ' }}
+                    <div id="logging" class="form-check form-check-inline">
+                        <input type="checkbox" id="debug_parse" name="debug_parse" value="parse" oninput="checkbox(this.value, this.checked);" title="(De)Aktivieren des debug-logging für parse_item">
+                    </div>
+                    <div id="logging" class="form-check form-check-inline">
+                        <input type="checkbox" id="debug_execute" name="debug_execute" value="execute" oninput="checkbox(this.value, this.checked);" title="(De)Aktivieren des debug-logging für execute_items">
+                    </div>
+                    <div id="logging" class="form-check form-check-inline">
+                      <input type="checkbox" id="debug_ondemand" name="debug_ondemand" value="ondemand" oninput="checkbox(this.value, this.checked);" title="(De)Aktivieren des debug-logging für on_demand">
+                    </div>
+                    <div id="logging" class="form-check form-check-inline">
+                        <input type="checkbox" id="debug_onchange" name="debug_onchange" value="parse" oninput="checkbox(this.value, this.checked);" title="(De)Aktivieren des debug-logging für on_change">
+                    </div>
+                    <div id="logging" class="form-check form-check-inline">
+                        <input type="checkbox" id="debug_prepare" name="debug_prepare" value="execute" oninput="checkbox(this.value, this.checked);" title="(De)Aktivieren des debug-logging für prepare">
+                    </div>
+                    <div id="logging" class="form-check form-check-inline">
+                      <input type="checkbox" id="debug_sql" name="debug_sql" value="sql" oninput="checkbox(this.value, this.checked);" title="(De)Aktivieren des debug-logging für sql">
+                    </div>
+                {% endif %}
+            </td>
+        </tr>
+	</tbody>
+</table>
+{% endblock headtable %}
+
+
+<!-- Additional buttons for the web interface (if any are needed) - displayed below the headtable-section -->
+{% block buttons %}
+	<div>
+        <button id="recalc" type="button" class="btn btn-shng btn-sm" onclick="if (confirm('{{ _('Neuberechnung aller Items auslösen?') }}')) { jQuery.get('recalc_all');recalc_button(true); }" title="Ausführen einer Neuberechnung aller Items"><i class="fas fa-redo" id="recalc_icon"></i></button>
+        <button id="clear_queue" type="button" class="btn btn-shng btn-sm" onclick="if (confirm('{{ _('Berechnungslauf abbrechen?') }}')) { jQuery.get('clear_queue'); }" title="Abbrechen des aktuellen Berechnungslaufes"><i class="fas fa-times"></i></button>
+		<button id="clear_cache" type="button" class="btn btn-shng btn-sm" onclick="if (confirm('{{ _('Leeren aller cache_dicts auslösen?') }}')) { jQuery.get('clean_cache_dicts'); }" title="Löschen alle Cache-Daten des Plugins"><i class="fas fa-trash"></i></button>
+        <button id="plugin_button_playpause" type="button" class="btn actionbutton btn-sm btn-outline-dark" title="wait" onclick="$('#button_id').val(this.id);$('#button').val(this.value);$('#button_pressed').submit();"><i class="fas"></i></button>
+            <script>togglePlayPause("plugin_button_playpause", '{{ p.suspended | lower }}')</script>
+	</div>
+    <form id="button_pressed" action="" method="post">
+    <input type="hidden" id="button" name="button" value="" />
+    <input type="hidden" id="button_id" name="button_id" value="">
+</form>
+{% endblock %}
+
+<!-- Define the number of tabs for the body of the web interface (1 - 6) -->
+{% set tabcount = 3 %}
+
+{% set tab1title = "<strong>" ~ plugin_shortname ~ " Items</strong> (" ~ item_count ~ ")" %}
+{% set tab2title = "<strong>" ~ plugin_shortname ~ " Maintenance</strong>" %}
+{% set tab3title = "<strong>" ~ plugin_shortname ~ " API/Doku</strong>" %}
+
+<!-- Set the tab that will be visible on start, if another tab that 1 is wanted (1 - 3) -->
+{% if item_count > 0 %}
+	{% set start_tab = 1 %}
+{% else %}
+    {% set start_tab = 3 %}
+{% endif %}
+
+
+<!-- Content block for the first tab of the Webinterface -->
+{% block bodytab1 %}
+<table id="maintable" class="dataTableAdditional">
+    <tbody>
+        {% for item in items %}
+            <tr>
+                <td></td>
+                <td class="py-1">{{ item._path }}</td>
+                <td class="py-1">{{ item._type }}</td>
+                <td class="py-1">{{ p.get_item_config(item._path)['db_addon_fct'] }}</td>
+                <td class="py-1" style="text-align: center">{{ _(p.get_item_config(item)['cycle']|string) }}</td>
+                <td class="py-1" style="text-align: center">{% if p.get_item_config(item)['startup'] %}{{ _('Ja') }}{% else %}{{ _('Nein') }}{% endif %}</td>
+                <td class="py-1" id="{{ item._path }}_value" style="text-align: right">&nbsp;</td>
+                <td class="py-1" id="{{ item._path }}_last_update" style="text-align: center">&nbsp;</td>
+                <td class="py-1" id="{{ item._path }}_last_change" style="text-align: center">&nbsp;</td>
+                <td>
+                    <button id="{{ item.property.path }}_button_recalc" type="button" class="btn actionbutton btn-shng btn-sm" title="{{ _('Neuberechnung') }}" onclick="$('#button_id').val(this.id);$('#button').val('{{ item.property.path }}:recalc_item');$('#button_pressed').submit();"><i class="fas fa-redo"></i></button>
+                    <button id="{{ item.property.path }}_button_cache_del" type="button" class="btn actionbutton btn-outline-danger btn-sm" title="{{ _('Wertecache löschen') }}" onclick="$('#button_id').val(this.id);$('#button').val('{{ item.property.path }}:clean_item_cache');$('#button_pressed').submit();"><i class="fas fa-trash"></i></button>
+                    <button id="{{ item.property.path }}_button_playpause" type="button" class="btn actionbutton btn-sm btn-outline-dark" title="wait" onclick="$('#button_id').val(this.id);$('#button').val(this.value);$('#button_pressed').submit();"><i class="fas"></i></button>
+                      <script>togglePlayPause("{{ item.property.path }}_button_playpause", '{{ p.get_item_config(item._path)['suspended'] | lower }}')</script>
+                </td>
+            </tr>
+         {% endfor %}
+    </tbody>
+</table>
+<form id="button_pressed" action="" method="post">
+  <input type="hidden" id="button" name="button" value="" />
+  <input type="hidden" id="button_id" name="button_id" value="">
+</form>
+{% endblock bodytab1 %}
+
+
+<!-- 	Content block for the second tab of the Webinterface -->
+{% block bodytab2 %}
+<table id="mtable2" class="dataTableAdditional">
+    <tbody>
+        <tr><td></td>
+            <td class="py-1">{{ _('00_items') }}</td>
+            <td class="py-1">{{ p._all_items() }}</td>
+        </tr>
+        <tr><td></td>
+            <td class="py-1">{{ _('01_ondemand_items') }}</td>
+            <td class="py-1">{{ p._ondemand_items() }}</td>
+        </tr>
+        <tr><td></td>
+            <td class="py-1">{{ _('02_admin_items') }}</td>
+            <td class="py-1">{{ p._admin_items() }}</td>
+        </tr>
+        <tr><td></td>
+            <td class="py-1">{{ _('10_daily_items') }}</td>
+            <td class="py-1">{{ p._daily_items() }}</td>
+        </tr>
+        <tr><td></td>
+            <td class="py-1">{{ _('11_weekly_items') }}</td>
+            <td class="py-1">{{ p._weekly_items() }}</td>
+        </tr>
+        <tr><td></td>
+            <td class="py-1">{{ _('12_monthly_items') }}</td>
+            <td class="py-1">{{ p._monthly_items() }}</td>
+        </tr>
+        <tr><td></td>
+            <td class="py-1">{{ _('13_yearly_items') }}</td>
+            <td class="py-1">{{ p._yearly_items() }}</td>
+        </tr>
+        <tr><td></td>
+            <td class="py-1">{{ _('14_onchange_items') }}</td>
+            <td class="py-1">{{ p._onchange_items() }}</td>
+        </tr>
+        <tr><td></td>
+            <td class="py-1">{{ _('15_startup_items') }}</td>
+            <td class="py-1">{{ p._startup_items() }}</td>
+        </tr>
+        <tr><td></td>
+            <td class="py-1">{{ _('17_database_items') }}</td>
+            <td class="py-1">{{ p._database_items() }}</td>
+        </tr>
+        <tr><td></td>
+            <td class="py-1">{{ _('16_static_items') }}</td>
+            <td class="py-1">{{ p._static_items() }}</td>
+        </tr>
+        <tr><td></td>
+            <td class="py-1">{{ _('32_item_cache') }}</td>
+            <td class="py-1">{{ p.item_cache }}</td>
+        </tr>
+        <tr><td></td>
+            <td class="py-1">{{ _('20_tageswert_dict') }}</td>
+            <td class="py-1">{{ p.current_values['day'] }}</td>
+        </tr>
+        <tr><td></td>
+            <td class="py-1">{{ _('21_wochenwert_dict') }}</td>
+            <td class="py-1">{{ p.current_values['week'] }}</td>
+        </tr>
+        <tr><td></td>
+            <td class="py-1">{{ _('22_monatswert_dict') }}</td>
+            <td class="py-1">{{ p.current_values['month'] }}</td>
+        </tr>
+        <tr><td></td>
+            <td class="py-1">{{ _('23_jahreswert_dict') }}</td>
+            <td class="py-1">{{ p.current_values['year'] }}</td>
+        </tr>
+        <tr><td></td>
+            <td class="py-1">{{ _('24_vortagsendwert_dict') }}</td>
+            <td class="py-1">{{ p.previous_values['day'] }}</td>
+        </tr>
+        <tr><td></td>
+            <td class="py-1">{{ _('25_vorwochenendwert_dict') }}</td>
+            <td class="py-1">{{ p.previous_values['week'] }}</td>
+        </tr>
+        <tr><td></td>
+            <td class="py-1">{{ _('26_vormonatsendwert_dict') }}</td>
+            <td class="py-1">{{ p.previous_values['month'] }}</td>
+        </tr>
+        <tr><td></td>
+            <td class="py-1">{{ _('27_vorjahresendwert_dict') }}</td>
+            <td class="py-1">{{ p.previous_values['year'] }}</td>
+        </tr>
+    </tbody>
+</table>
+{% endblock bodytab2 %}
+
+
+<!-- Content block for the third tab of the Webinterface -->
+{% block bodytab3 %}
+<h3 style="color:#A9A9A9;"><strong>{{_('Item Attribute')}}</strong></h3>
+{%  for function, itemdefinitions_dict in p.metadata.itemdefinitions.items() %}
+    <div class="card mb-2">
+        <div class="card-header p-2">
+            <strong>{{ function }}</strong> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{{('Beschreibung:')}} {{ itemdefinitions_dict['description'][language] }} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {{ ('Ergebnisdatentyp:')}} {{ itemdefinitions_dict['type'] }}
+        </div>
+        {% if 'valid_list' in itemdefinitions_dict %}
+        <div class="card-body p-2">
+              <table id="huhu" class="table table-striped table-hover pluginList display">
+                <thead>
+                    <tr>
+                        <th>{{_('Item Attributwert')}}</th>
+                        <th>{{_('Item_Type')}}</th>
+                        <th>{{_('Berechnung')}}</th>
+                        <th>{{_('Beschreibung')}}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in itemdefinitions_dict['valid_list'] %}
+                        <tr>
+                            <td class="py-1">{{ entry }}</td>
+                            <td class="py-1">{% if 'valid_list_item_type' in itemdefinitions_dict %} {{ itemdefinitions_dict.valid_list_item_type[loop.index0] }} {% else %} {{_('-')}} {% endif %}</td>
+                            <td class="py-1">{% if 'valid_list_calculation' in itemdefinitions_dict %} {{ _(itemdefinitions_dict.valid_list_calculation[loop.index0] | string) }} {% else %} {{_('-')}} {% endif %}</td>
+                            <td class="py-1">{% if 'valid_list_description' in itemdefinitions_dict %} {{ itemdefinitions_dict.valid_list_description[loop.index0] | string }} {% else %} {{_('-')}} {% endif %}</td>
+                        </tr>
+                     {% endfor %}
+                </tbody>
+            </table>
+      </div>
+      {% endif %}
+    </div>
+{% endfor %}
+
+<br>
+<h3 style="color:#A9A9A9;"><strong>{{_('Plugin Funktionen')}}</strong></h3>
+{%  for function, plugin_functions_dict in p.metadata.plugin_functions.items() %}
+    <div class="card mb-2">
+      <div class="card-header p-2">
+          <strong>{{ function }}</strong> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{{('Beschreibung:')}} {{ plugin_functions_dict['description'][language] }} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {{ ('Ergebnisdatentyp:')}} {{ plugin_functions_dict['type'] }}
+      </div>
+
+      {% if 'parameters' in plugin_functions_dict %}
+      <div class="card-body p-2">
+        <div class="card-body p-2">
+            <table id="haha" class="table table-striped table-hover pluginList display">
+                <thead>
+                    <tr>
+                        <th>{{_('Parameter')}}</th>
+                        <th>{{_('Beschreibung')}}</th>
+                        <th>{{_('Type')}}</th>
+                        <th>{{_('zulässige Werte')}}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in plugin_functions_dict['parameters'] %}
+                        <tr>
+                            <td class="py-1">{{ entry }}</td>
+                            <td class="py-1">{{ plugin_functions_dict['parameters'][entry]['description'][language] }}</td>
+                            <td class="py-1">{{ plugin_functions_dict['parameters'][entry]['type'] }}</td>
+                            <td class="py-1">{{ plugin_functions_dict['parameters'][entry]['valid_list'] }}</td>
+                        </tr>
+                     {% endfor %}
+                </tbody>
+            </table>
+          </div>
+      {% endif %}
+    </div>
+{% endfor %}
+</div>
+{% endblock bodytab3 %}

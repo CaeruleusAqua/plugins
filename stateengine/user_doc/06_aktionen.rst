@@ -9,8 +9,7 @@ Aktionen
 Es gibt zwei Möglichkeiten, Aktionen zu definieren. Die :ref:`Aktionen - einzeln`
 Variante wird am Ende der Dokumentation der Vollständigkeit halber beschrieben.
 Für einfache Aktionen ohne Angabe zusätzlicher Attribute wie delay, order, repeat, etc.
-kann diese andere Möglichkeit der Aktionsangabe durchaus Sinn machen. Sie wurde
-allerdings in der weiteren Pluginentwicklung nicht mehr getestet.
+kann diese andere Möglichkeit der Aktionsangabe durchaus Sinn machen.
 
 Bei der hier beschriebenen kombinierten Variante zur Definition von Aktionen werden
 alle Parameter einer Aktion in einem Attribut definiert. Der Aktionsname ``se_action_<Bedingungsname/Aktionsname>``
@@ -19,11 +18,18 @@ definiert und benannt wurde. Die Herangehensweise ähnelt also stark der Deklara
 
 Zusätzlich zu ``se_item_<Bedingungsname/Aktionsname>`` lässt sich über den Eintrag
 ``se_mindelta_<Bedingungsname/Aktionsname>`` definieren, um welchen Wert
-sich ein Item mindestens geändert haben muss, um neu gesetzt zu werden. Im unten
-stehenden Beispiel wird der Lamellenwert abhängig vom Sonnenstand berechnet. Ohne mindelta
+sich ein Item mindestens geändert haben muss, um neu gesetzt zu werden. Diese Konfiguration
+kann für einzelne Aktionen individuell über die Angabe ``mindelta`` überschrieben werden.
+Im unten stehenden Beispiel wird der Lamellenwert abhängig vom Sonnenstand berechnet. Ohne mindelta
 würden sich die Lamellen ständig um wenige Grad(bruchteile) ändern. Wird jedoch mindelta
 beispielsweise auf den Wert 10 gesetzt, findet eine Änderung erst statt, wenn sich der
 errechnete Wert um mindestens 10 Grad vom aktuellen Lamellenwert unterscheidet.
+Im Beispiel wird auch mittels ``se_status_<Bedingungsname>`` ein gesondertes Item definiert,
+das den Wert vom KNX-Aktor empfängt.
+
+Außerdem ist es möglich, über ``se_repeat_actions`` generell zu definieren,
+ob Aktionen für die Stateengine wiederholt ausgeführt werden sollen oder nicht. Diese Konfiguration
+kann für einzelne Aktionen individuell über die Angabe ``repeat`` überschrieben werden.
 
 Beispiel zu Aktionen
 --------------------
@@ -43,6 +49,7 @@ Das folgende Beispiel führt je nach Zustand folgende Aktionen aus:
             rules:
                 se_item_height: raffstore1.hoehe # Definition des zu ändernden Höhe-Items
                 se_item_lamella: raffstore1.lamelle # Definition des zu ändernden Lamellen-Items
+                se_status_lamella: raffstore1.lamelle.status # Definition des Lamellen Statusitems
                 se_mindelta_lamella: 10 # Mindeständerung von 10 Grad, sonst werden die Lamellen nicht aktualisiert.
                 Daemmerung:
                     <...>
@@ -259,10 +266,13 @@ kann auch durch ein eval oder Item zur Laufzeit berechnet werden.
        'delay: <eval>/<item>' --> Ergebnis eines Eval-Ausdrucks oder eines Items
        'delay: 30'            --> 30 Sekunden
        'delay: 30m'           --> 30 Minuten
+       'delay: -1'            --> Entfernen des Schedulers
 
-Der Timer zur Ausführung der Aktion nach der angegebenen
-Verzögerung wird entfernt, wenn eine gleichartige Aktion
-ausgeführt werden soll (egal ob verzögert oder nicht).
+Der Timer zur Ausführung der Aktion nach der angegebenen Verzögerung wird entfernt,
+wenn eine gleichartige Aktion mit Delay-Angabe ausgeführt werden soll. Außerdem
+ist es möglich, den Timer bewusst abzubrechen, ohne eine Aktion auszuführen,
+indem der Delay auf -1 gesetzt wird. Dies macht insbesondere beim Verlassen von
+Zuständen Sinn, um ungewünschte verzögerte Aktionen vom "alten" Zustand zu verhindern.
 
 **instanteval: <bool>**
 
@@ -291,6 +301,7 @@ ursprünglichen Zustands (regen) gesetzt werden soll, kann der Parameter ``insta
 
 .. code-block:: yaml
 
+       'repeat: <eval>/<item>' --> Ergebnis eines Eval-Ausdrucks oder eines Items
        'repeat: [True|False]'
 
 Über das Attribut wird unabhängig vom globalen Setting für das
@@ -336,20 +347,20 @@ Die einzelnen Angaben einer Liste werden als ``OR`` evaluiert.
 
 .. code-block:: yaml
 
-screens:
-    conditionset_to_check:
-        type: str
-        value: "screens.osten_s1.automatik.rules.abend.enter_abend"
+    screens:
+        conditionset_to_check:
+            type: str
+            initial_value: "screens.osten_s1.automatik.rules.abend.enter_abend"
 
-      conditionset:
-        - regex:enter_(.*)_test
-        - eval:sh.screens.conditionset_to_check.property.name
+          conditionset:
+            - regex:enter_(.*)_test
+            - eval:sh.screens.conditionset_to_check.property.value
 
 Der gesamte Pfad könnte wie folgt evaluiert werden:
 
 .. code-block:: yaml
 
-      "eval:se_eval.get_relative_itemid('{}.<bedingungsset>'.format(se_eval.get_relative_itemvalue('..state_id')))"
+    "eval:se_eval.get_relative_itemid('{}.<bedingungsset>'.format(se_eval.get_relative_itemvalue('..state_id')))"
 
 Eine sinnvolle Anwendung hierfür wäre, anstelle von verschiedenen Zuständen mit
 leicht anderen Bedingungen, alles in einen Zustand zu packen und anhand des Conditionsets
@@ -384,7 +395,7 @@ regnet hingegen auf den Wert, der in den Settings hinterlegt ist.
 
 .. code-block:: yaml
 
-      previousconditionset: regex:enter_(.*)_test"
+      "previousconditionset: regex:enter_(.*)_test"
 
 Über das Attribut wird festgelegt, dass die Aktion nur dann ausgeführt werden
 soll, wenn die vorherige Bedingungsgruppe des aktuellen Zustands mit dem angegebenen Ausdruck übereinstimmt.
@@ -394,11 +405,64 @@ Die Abfrage erfolgt dabei nach den gleichen Regeln wie bei ``conditionset`` oben
 
 .. code-block:: yaml
 
-      previousstate_conditionset: regex:enter_(.*)_test"
+      "previousstate_conditionset: regex:enter_(.*)_test"
 
 Über das Attribut wird festgelegt, dass die Aktion nur dann ausgeführt werden
 soll, wenn die Bedingungsgruppe, mit der der vorherige Zustand eingenommen wurde, mit dem angegebenen Ausdruck übereinstimmt.
 Die Abfrage erfolgt dabei ebenfalls nach den gleichen Regeln wie bei ``conditionset`` oben angegeben.
+
+**next_conditionset: <conditionset regex>**
+
+.. code-block:: yaml
+
+      "next_conditionset: regex:enter_(.*)_test"
+
+Über das Attribut wird festgelegt, dass die Aktion nur dann ausgeführt werden
+soll, wenn die Bedingungsgruppe, mit der der zukünftige Zustand eingenommen wird, mit dem angegebenen Ausdruck übereinstimmt.
+Die Abfrage erfolgt dabei ebenfalls nach den gleichen Regeln wie bei ``conditionset`` oben angegeben.
+Diese Angabe ist primär bei leave_actions sinnvoll.
+
+**mindelta: <num>**
+
+Im folgenden Beispiel wird mindelta für eine einzelne Aktion gesetzt. Anstatt also eine minimale Änderung
+für alle Aktionen mit bestimmtem Namen festzulegen, wird eine einzelne Aktion nur dann ausgeführt,
+wenn sich der Wert um mindestens den angegeben Wert geändert hat.
+Wird mindelta beispielsweise auf den Wert 10 gesetzt, findet eine Änderung erst statt, wenn sich der
+errechnete Wert um mindestens 10 Grad vom aktuellen Lamellenwert unterscheidet.
+
+.. code-block:: yaml
+
+    #items/item.yaml
+    raffstore1:
+        automatik:
+            struct: stateengine.general
+            rules:
+                se_item_height: raffstore1.hoehe # Definition des zu ändernden Höhe-Items
+                se_item_lamella: raffstore1.lamelle # Definition des zu ändernden Lamellen-Items
+                se_status_lamella: raffstore1.lamelle.status # Definition des Lamellen Statusitems
+                Daemmerung:
+                    <...>
+                    se_action_height:
+                        - 'function: set'
+                        - 'to: value:100'
+                    se_action_lamella:
+                        - 'function: set'
+                        - 'to: value:25'
+                        - 'mindelta: 10'
+                    <...>
+
+**minagedelta: <num>**
+
+.. code-block:: yaml
+
+      minagedelta: 300
+
+Über das Attribut wird festgelegt, dass eine Aktion nur in einem vorgegebenen Intervall ausgeführt wird.
+Im angegebenen Beispiel wird die Aktion also nur ausgeführt, wenn der letzte Ausführungszeitpunkt mindestens
+5 Minuten zurück liegt. So kann verhindert werden, dass die Aktion bei jeder Neuevaluierung des Status ausgeführt wird.
+Ein Neustart des Plugins setzt den Counter wieder zurück, der letzte Ausführungszeitpunkt wird also nur bei laufendem
+Betrieb gespeichert und überdauert einen Neustart nicht.
+
 
 Templates für Aktionen
 ----------------------

@@ -10,10 +10,10 @@ plugin:
     tester: onkelandy, Sandman60, ohinckel
     state: qa-passed
     keywords: telnet cli command line interface remote control
-    documentation: http://smarthomeng.de/user/plugins/cli/user_doc.html
+    documentation: ''
 
     version: 1.8.2                 # Plugin version
-    sh_minversion: 1.9.0           # minimum shNG version to use this plugin
+    sh_minversion: '1.9.0'           # minimum shNG version to use this plugin
     # sh_maxversion:               # maximum shNG version to use this plugin (leave empty if latest)
     multi_instance: true           # plugin supports multi instance
     restartable: true

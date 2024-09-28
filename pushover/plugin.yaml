@@ -10,8 +10,8 @@ plugin:
     maintainer: 'Thomas Creutz'
     tester: None
     state: ready
-    version: 1.6.1                 # Plugin version
-    sh_minversion: 1.5             # minimum shNG version to use this plugin
+    version: 1.6.2                 # Plugin version
+    sh_minversion: '1.5'             # minimum shNG version to use this plugin
     multi_instance: True           # plugin supports multi instance
     restartable: unknown
     classname: Pushover            # class containing the plugin

@@ -178,7 +178,7 @@ class EventListener(EventListenerBase):
                     port_number, factory, interface=ip_address
                 )
                 break
-            # pylint: disable=invalid-name
+            # pylint: disable=invalid-name,used-before-assignment
             except twisted.internet.error.CannotListenError as e:
                 log.warning(e)
                 continue
@@ -383,7 +383,6 @@ class Subscription(SubscriptionBase):
         return d
 
     def _wrap(self, method, strict, *args, **kwargs):
-
         """This is a wrapper for `Subscription.subscribe`, `Subscription.renew`
         and `Subscription.unsubscribe` which:
 

@@ -25,13 +25,8 @@
 #
 #########################################################################
 
-import datetime
-import time
-import os
-import logging
 import json
 
-from lib.item import Items
 from lib.model.smartplugin import SmartPluginWebIf
 
 
@@ -40,8 +35,6 @@ from lib.model.smartplugin import SmartPluginWebIf
 # ------------------------------------------
 
 import cherrypy
-import csv
-from jinja2 import Environment, FileSystemLoader
 
 class WebInterface(SmartPluginWebIf):
 
@@ -54,10 +47,12 @@ class WebInterface(SmartPluginWebIf):
         :type webif_dir: str
         :type plugin: object
         """
+        super().__init__()
         self.logger = plugin.logger
         self.webif_dir = webif_dir
         self.plugin = plugin
         self.tplenv = self.init_template_environment()
+        self.vis_enabled = plugin.vis_enabled
 
     @cherrypy.expose
     def index(self, action=None, item_id=None, item_path=None, reload=None, abitem=None, page='index'):
@@ -68,18 +63,10 @@ class WebInterface(SmartPluginWebIf):
 
         :return: contents of the template after beeing rendered
         """
-        item = self.plugin.itemsApi.return_item(item_path)
+        item = self.plugin.get_sh().return_item(item_path)
 
         tmpl = self.tplenv.get_template('{}.html'.format(page))
-        global_pagelength = cherrypy.config.get("webif_pagelength")
-        if global_pagelength:
-            pagelength = global_pagelength
-            self.logger.debug("Global pagelength {}".format(pagelength))
-        try:
-            pagelength = self.plugin.webif_pagelength
-            self.logger.debug("Plugin pagelength {}".format(pagelength))
-        except Exception:
-            pass
+        pagelength = self.plugin.get_parameter_value('webif_pagelength')
         if action == "get_graph" and abitem is not None:
             if isinstance(abitem, str):
                 try:
@@ -88,13 +75,16 @@ class WebInterface(SmartPluginWebIf):
                     self.logger.warning("Item {} not initialized yet. "
                                         "Try again later. Error: {}".format(abitem, e))
                     return None
-            self.plugin.get_graph(abitem, 'graph')
+            if self.vis_enabled:
+                self.plugin.get_graph(abitem, 'graph')
             tmpl = self.tplenv.get_template('visu.html')
-            return tmpl.render(p=self.plugin, item=abitem,
+            return tmpl.render(p=self.plugin, item=abitem, firstrun=str(abitem.firstrun),
                                language=self.plugin.get_sh().get_defaultlanguage(), now=self.plugin.shtime.now())
         # add values to be passed to the Jinja2 template eg: tmpl.render(p=self.plugin, interface=interface, ...)
         return tmpl.render(p=self.plugin,
+                           vis_enabled=self.vis_enabled,
                            webif_pagelength=pagelength,
+                           item_count=len(self.plugin._items),
                            language=self.plugin.get_sh().get_defaultlanguage(), now=self.plugin.shtime.now())
 
     @cherrypy.expose
@@ -111,11 +101,32 @@ class WebInterface(SmartPluginWebIf):
             # get the new data
             data = {}
             for item in self.plugin.get_items():
+                laststate = item.laststate_name
+                laststate = "-" if laststate in ["", None] else laststate
                 conditionset = item.lastconditionset_name
-                conditionset = "-" if conditionset == "" else conditionset
-                data.update({item.id: {'laststate': item.laststate_name, 'lastconditionset': conditionset}})
+                conditionset = "-" if conditionset in ["", None] else conditionset
+                ll = item.logger.log_level_as_num
+                if item.laststate_releasedby in [None, []]:
+                    lsr = "-"
+                else:
+                    lsr = [entry.split('.')[-1] for entry in item.laststate_releasedby]
+                data.update({item.id: {'laststate': laststate,
+                           'lastconditionset': conditionset, 'log_level': ll,
+                           'laststate_releasedby': lsr}})
             try:
                 return json.dumps(data)
             except Exception as e:
                 self.logger.error(f"get_data_html exception: {e}")
-        return {}
+        elif dataSet and isinstance(dataSet, str):
+            try:
+                dataSet = self.plugin.abitems[dataSet]
+            except Exception as e:
+                self.logger.warning("Item {} not initialized yet. "
+                                    "Try again later. Error: {}".format(dataSet, e))
+                return json.dumps({"success": "error"})
+            if self.vis_enabled and dataSet.firstrun is None:
+                self.plugin.get_graph(dataSet, 'graph')
+                return json.dumps({"success": "true"})
+            return json.dumps({"success": "false"})
+        else:
+            return {}
