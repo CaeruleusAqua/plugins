@@ -37,10 +37,6 @@ from pymodbus.payload import BinaryPayloadBuilder
 
 from pymodbus.client.tcp import ModbusTcpClient
 
-from pymodbus.version import version
-
-pymodbus_baseversion = int(version.short().split('.')[0])
-
 AttrAddress = 'modBusAddress'
 AttrType = 'modBusDataType'
 AttrFactor = 'modBusFactor'
@@ -395,16 +391,11 @@ class modbus_tcp(SmartPlugin):
             return None
 
         if objectType == 'Coil':
-            if pymodbus_baseversion > 2:
-                result = self._Mclient.write_coil(address, value, slave=slaveUnit)
-            else:
-                result = self._Mclient.write_coil(address, value, unit=slaveUnit)
+            result = self._Mclient.write_coil(address, value, slave=slaveUnit)
+
         elif objectType == 'HoldingRegister':
             registers = builder.to_registers()
-            if pymodbus_baseversion > 2:
-                result = self._Mclient.write_registers(address, registers, slave=slaveUnit)
-            else:
-                result = self._Mclient.write_registers(address, registers, unit=slaveUnit)
+            result = self._Mclient.write_registers(address, registers, slave=slaveUnit)
         elif objectType == 'DiscreteInput':
             self.logger.warning(f"this object type cannot be written {objectType}:{address} slaveUnit:{slaveUnit}")
             return
