@@ -37,6 +37,10 @@ from pymodbus.payload import BinaryPayloadBuilder
 
 from pymodbus.client.tcp import ModbusTcpClient
 
+from pymodbus.version import version
+
+pymodbus_baseversion = int(version.short().split('.')[0])
+
 AttrAddress = 'modBusAddress'
 AttrType = 'modBusDataType'
 AttrFactor = 'modBusFactor'
