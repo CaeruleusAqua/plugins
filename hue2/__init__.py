@@ -54,7 +54,7 @@ class Hue2(SmartPlugin):
     hue_light_action_writable_values = ['on', 'bri', 'hue', 'sat', 'ct', 'xy', 'bri_inc']
     hue_light_state_values           = ['on', 'bri', 'hue', 'sat', 'ct', 'xy', 'colormode', 'reachable', 'alert', 'effect']
     hue_light_state_writable_values  = ['on', 'bri', 'hue', 'sat', 'ct', 'xy', 'alert', 'effect']
-    hue_sensor_state_values          = ['daylight', 'temperature', 'presence', 'lightlevel', 'status']
+    hue_sensor_state_values          = ['daylight', 'temperature', 'presence', 'lightlevel', 'status', 'open']
     hue_sensor_config_values         = ['reachable', 'battery', 'on', 'sunriseoffset', 'sunsetoffset']
 
     br = None               # Bridge object for communication with the bridge

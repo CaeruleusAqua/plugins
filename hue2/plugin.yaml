@@ -164,6 +164,7 @@ item_attributes:
           - presence
           - lightlevel
           - status
+          - open
 
         valid_list_description:
             de:
