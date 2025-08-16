@@ -25,13 +25,7 @@
 #
 #########################################################################
 
-import datetime
-import time
-import os
-import logging
 import json
-
-from lib.item import Items
 from lib.model.smartplugin import SmartPluginWebIf
 
 
@@ -40,8 +34,6 @@ from lib.model.smartplugin import SmartPluginWebIf
 # ------------------------------------------
 
 import cherrypy
-import csv
-from jinja2 import Environment, FileSystemLoader
 
 class WebInterface(SmartPluginWebIf):
 
@@ -54,6 +46,7 @@ class WebInterface(SmartPluginWebIf):
         :type webif_dir: str
         :type plugin: object
         """
+        super().__init__()
         self.logger = plugin.logger
         self.webif_dir = webif_dir
         self.plugin = plugin
@@ -69,8 +62,6 @@ class WebInterface(SmartPluginWebIf):
 
         :return: contents of the template after beeing rendered
         """
-        item = self.plugin.itemsApi.return_item(item_path)
-
         tmpl = self.tplenv.get_template('{}.html'.format(page))
         pagelength = self.plugin.get_parameter_value('webif_pagelength')
         if action == "get_graph" and abitem is not None:

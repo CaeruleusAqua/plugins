@@ -53,6 +53,9 @@ class Neato(SmartPlugin):
     def numberRobots(self):
         return self.robot.numberRobots()
 
+    def backendOnline(self):
+        return self.robot._backendOnline
+
     def accountEmail(self):
         return self.get_parameter_value("account_email")
 
@@ -71,6 +74,7 @@ class Neato(SmartPlugin):
         self.scheduler_remove('poll_device')
         self.logger.debug("Stop method called")
         self.alive = False
+        self.robot._backendOnline = False
 
     def parse_item(self, item):
         
@@ -210,6 +214,8 @@ class Neato(SmartPlugin):
                 value = self.robot.dockHasBeenSeen
             elif attribute == 'command_startAvailable':
                 value = self.robot.commandStartAvailable
+            elif attribute == 'online_status':
+                value = self.robot._backendOnline
 
             # if a value was found, store it to item
             if value is not None:

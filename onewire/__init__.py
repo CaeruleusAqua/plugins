@@ -43,7 +43,7 @@ class OneWire(SmartPlugin):
     the update functions for the items
     """
 
-    PLUGIN_VERSION = '1.9.4'
+    PLUGIN_VERSION = '1.9.5'
 
     _flip = {0: '1', False: '1', 1: '0', True: '0', '0': True, '1': False}
 
@@ -448,7 +448,7 @@ class OneWire(SmartPlugin):
     def _discovery_process_bus(self, path):
 
         bus = path.split("/")[-2]
-        self.logger.info(f"- Processing of data for bus {bus} started")
+        self.logger.dbghigh(f"Discovery: Processing of data for bus {bus} started")
         if bus not in self._buses:
             self._buses[bus] = []
             self._webif_buses[bus] = {}
@@ -461,7 +461,7 @@ class OneWire(SmartPlugin):
             self.logger.info(f"_discovery_process_bus: Problem reading {bus}, error: {e}")
             return
 
-        self.logger.info(f"- On bus {bus} found sensors: {sensors}")
+        self.logger.info(f"Discovery: On bus {bus}  {len(sensors)} sensors found: {sensors}")
 
         for sensor in sensors:
             # skip subdirectories alarm, interface and simultaneous
@@ -547,7 +547,7 @@ class OneWire(SmartPlugin):
             else:
                 self.logger.debug(f"_discovery_process_bus: Sensor {sensor} was already found in bus {bus}")
 
-        self.logger.info(f"- Processing of data for bus {bus} finished")
+        self.logger.dbghigh(f"Discovery: Processing of data for bus {bus} finished")
         return
 
     def _discovery(self):
@@ -558,14 +558,14 @@ class OneWire(SmartPlugin):
         If the next call takes places it will be checked if there is something changed in top level directory.
         The rest of the discovery will be skipped if now changes are found.
         """
-        self.logger.info("discovery started")
+        self.logger.dbghigh("Discovery started")
         self._intruders = []  # reset intrusion detection
         try:
             listing = self.owbase.dir('/')
         except Exception as e:
             self.logger.error(f"_discovery: listing '/' failed with error '{e}'")
             return
-        self.logger.info(f"_discovery: got listing for '/' = '{listing}'  self.alive: {self.alive}")
+        self.logger.dbghigh(f"Discovery: Got listing for '/' = '{listing}'  self.alive: {self.alive}")
         if type(listing) != list:
             self.logger.warning(f"_discovery: listing '{listing}' is not a list.")
             return
@@ -588,7 +588,7 @@ class OneWire(SmartPlugin):
 
         else: # for did not end prematurely with break or something else
             self._discovered = True
-            self.logger.info("discovery finished")
+            self.logger.dbghigh("Discovery finished")
 
         # get a list of all directory entries from owserver
         # self.devices = self.tree()
@@ -631,14 +631,14 @@ class OneWire(SmartPlugin):
         if not self.has_iattr(item.conf, 'ow_addr'):
             return
         if not self.has_iattr(item.conf, 'ow_sensor'):
-            self.logger.warning(f"parse_item: No ow_sensor for {item.id()} defined")
+            self.logger.warning(f"parse_item: No ow_sensor for {item.property.path} defined")
             return
 
         addr = self.get_iattr_value(item.conf,'ow_addr')
         key = self.get_iattr_value(item.conf,'ow_sensor')
         config_data['sensor_addr'] = addr
         config_data['sensor_key'] = key
-        self.logger.debug(f"parse_item: ow_sensor '{key}' with ow_addr '{addr}' for item '{item.id()}' defined")
+        self.logger.debug(f"parse_item: ow_sensor '{key}' with ow_addr '{addr}' for item '{item.property.path}' defined")
 
         # check the compliance with regular sensor address definitions
         while True:
@@ -667,7 +667,7 @@ class OneWire(SmartPlugin):
             table = self._ibuttons
             config_data['deviceclass'] = 'iButton'
         elif key == 'BM':
-            self._ibutton_masters[addr] = item.id()
+            self._ibutton_masters[addr] = item.property.path
             config_data['deviceclass'] = 'iButton master'
             self.add_item(item, mapping=addr+'-'+key, config_data_dict=config_data)
             return
@@ -677,7 +677,7 @@ class OneWire(SmartPlugin):
 
         if key not in self._supported:  # unknown key
             path = '/' + addr + '/' + key
-            self.logger.info(f"parse_item: unknown sensor specified for {item.id()} using path: {path}")
+            self.logger.info(f"parse_item: unknown sensor specified for {item.property.path} using path: {path}")
         else:
             path = None
             if key == 'VOC':
@@ -701,7 +701,7 @@ class OneWire(SmartPlugin):
         if caller != self.get_shortname():
             try:
                 # code to execute, only if the item has not been changed by this plugin:
-                self.logger.debug(f"update_item: update item: {item.id()}, item has been changed outside this plugin")
+                self.logger.debug(f"update_item: update item: {item.property.path}, item has been changed outside this plugin")
                 self.owbase.write(item._ow_path['path'], self._flip[item()])
             except Exception as e:
                 self.logger.warning(f"update_item: problem setting output {item._ow_path['path']}: {e}")

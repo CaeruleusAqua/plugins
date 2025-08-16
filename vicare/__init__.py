@@ -38,7 +38,7 @@ AUTHORIZE_URL = 'https://iam.viessmann.com/idp/v3/authorize'
 TOKEN_URL = 'https://iam.viessmann.com/idp/v3/token'
 
 class Vicare(SmartPlugin):
-    PLUGIN_VERSION = '1.9.2'
+    PLUGIN_VERSION = '1.9.5'
 
     def __init__(self, sh):
         """
@@ -63,7 +63,8 @@ class Vicare(SmartPlugin):
         self.installationId = ''                             # installation ID, unique for the whole viessmann installation
         self.gatewaySerial = ''
         self.deviceId = ''
-        self.featureListJson = {}
+        self.featureListJson = {}                            # List of all available features as Json
+        self.deviceListJson = {}                             # List of all available devices as Json
         self.nr_devices = 0                                  # Number of devices
         self.deviceType = 'unknown'
         self.modelId = 'unknown'
@@ -151,7 +152,10 @@ class Vicare(SmartPlugin):
                 self.logger.debug(f"Updated item {item} with tx_key: {tx_key}")
                 uri, tag, type, min, max, stepping, enumList = self.decodeCommandFeature(self.featureListJson, vicare_tx_key = tx_key, vicare_tx_path = tx_path, log_features = False)
                 self.logger.debug(f"uri, tag, type, min, max, stepping: {uri},{tag},{type},{min},{max},{stepping}")
-                self.controlItem(url=uri, tag=tag, type=type, min=min, max=max, stepping=stepping, enumList=enumList, value=item())
+                if uri is not None:
+                    self.controlItem(url=uri, tag=tag, type=type, min=min, max=max, stepping=stepping, enumList=enumList, value=item())
+                else:
+                    self.logger.debug(f"Item {item} cannot be controlled because no valid command url was found. Aborting.")
             else:
                 self.logger.error(f"Item {item} is missing the attribute vicare_tx_key.")
         pass
@@ -364,7 +368,6 @@ class Vicare(SmartPlugin):
         self.decodeFeatures(self.featureListJson, log_features = False)
 
 
-
     def pollUrlInterface(self, url): 
         headers={}
         headers['Authorization'] = f"Bearer {self.accessToken}"
@@ -393,7 +396,7 @@ class Vicare(SmartPlugin):
         if response is None:
             return
         if response.status_code == 200:
-            self.logger.debug(f"pollINstallationId request successfull")
+            self.logger.debug(f"pollInstallationId request successfull")
         else:
             self.logger.warning(f"pollInstallationId request was unsuccessfull. Status code: {response.status_code}, Text: {response.text}")
             return
@@ -460,7 +463,7 @@ class Vicare(SmartPlugin):
         if response is None:
             return
         if response.status_code == 200:
-            self.logger.debug(f"pollDevices request successfull")
+            self.logger.debug(f"pollDevices request successfull: {response.text}")
         else:
             self.logger.warning(f"pollDevices request was unsuccessfull. Status code: {response.status_code}")
             return
@@ -472,32 +475,43 @@ class Vicare(SmartPlugin):
                 return
 
             if 'data' in responseJson:
+                self.deviceListJson = responseJson['data']
                 dataJson = responseJson['data']
-                #self.logger.warning(f"Debug dataJson: {dataJson}")
-                #self.logger.warning(f"Debug dataJson[0]: {dataJson[0]}")
 
                 self.nr_devices = len(dataJson)
+                index_of_device = 0
                 if self.nr_devices > 1:
-                    self.logger.debug(f"pollDevices: {self.nr_devices} devices found but only the first is decoded.")
+                    self.logger.info(f"pollDevices: Found {self.nr_devices} devices.")
+                    found_valid_serial = False
+                    # Determine device of interest by picking the first device having a valid boiler serial number:
+                    for i in range(0,self.nr_devices):
+                        if 'boilerSerial' in dataJson[i] and (dataJson[i]['boilerSerial'] is not None):
+                            found_valid_serial = True
+                            index_of_device = i
+                            self.logger.info(f"pollDevices: Decoding device with index {index_of_device} and boiler serial number:{dataJson[i]['boilerSerial']}")
+                
+                    if found_valid_serial == False:
+                        self.logger.error(f"pollDevices: No device with valid boiler serial number found. Perhaps plugin has to be extended for additional device types. Aborting decoding.")
+                        return
 
-                dataJson_0 = dataJson[0]
+                dataJson_device = dataJson[index_of_device]
 
                 boilerSerial = None
                               
-                if 'id' in dataJson_0:
-                    self.deviceId = dataJson_0['id']
+                if 'id' in dataJson_device :
+                    self.deviceId = dataJson_device ['id']
                     self.logger.info(f"DeviceId is {self.deviceId}")
-                if 'boilerSerial' in dataJson_0:
-                    boilerSerial = dataJson_0['boilerSerial']
+                if 'boilerSerial' in dataJson_device :
+                    boilerSerial = dataJson_device ['boilerSerial']
                     self.logger.info(f"BoilerSerial is {boilerSerial}")
-                if 'modelId' in dataJson_0:
-                    self.modelId = dataJson_0['modelId']
+                if 'modelId' in dataJson_device :
+                    self.modelId = dataJson_device ['modelId']
                     self.logger.info(f"modelId is {self.modelId}")
-                if 'status' in dataJson_0:
-                    status = dataJson_0['status']
+                if 'status' in dataJson_device :
+                    status = dataJson_device ['status']
                     self.logger.info(f"Status is {status}")
-                if 'deviceType' in dataJson_0:
-                    self.deviceType = dataJson_0['deviceType']
+                if 'deviceType' in dataJson_device :
+                    self.deviceType = dataJson_device ['deviceType']
                     self.logger.info(f"deviceType is {self.deviceType}")
 
                 # Copy data in viessmann items:
@@ -507,6 +521,9 @@ class Vicare(SmartPlugin):
                     if rx_key == 'boilerSerial':
                         if boilerSerial:
                             item(boilerSerial, self.get_shortname())
+            else:
+                # No data available in response
+                self.deviceListJson = {}
 
     def pollFeatures(self):
         self.featureListJson = {}
@@ -526,10 +543,11 @@ class Vicare(SmartPlugin):
         if response is None:
             return
         if response.status_code == 200:
-            self.logger.debug(f"pollFeatures request successfull")
+            self.logger.debug(f"pollFeatures: request successfull, response: {response.text}")
         else:
             self.logger.warning(f"pollFeatures request was unsuccessfull. Status code: {response.status_code}")
-            self.logger.warning(f"pollFeatures Debug response: {response}, response.text: {response.text}")
+            if not response.text == "":
+                self.logger.warning(f"pollFeatures Debug response: {response}, response.text: {response.text}")
             return
     
         if response.json() is not None:
@@ -542,6 +560,10 @@ class Vicare(SmartPlugin):
                 self.featureListJson = responseJson['data']
                 nr_features = len(self.featureListJson)
                 self.logger.info(f"Found {nr_features} features")
+        
+        if len(self.featureListJson) == 0:
+            self.logger.warning(f"pollFeature: No Features found")
+
 
     def decodeFeatures(self, featureList, log_features = False):
         nr_features = len(featureList)
@@ -624,7 +646,7 @@ class Vicare(SmartPlugin):
         nr_features = len(featureList)
         
         if nr_features == 0:
-            self.logger.error(f"decodeCommandFeature, feature list is empty. Aborting")
+            self.logger.warning(f"decodeCommandFeature, feature list is empty. Aborting")
             return None, None, None, None, None, None, None
 
         if vicare_tx_key == '':
@@ -689,7 +711,7 @@ class Vicare(SmartPlugin):
 
 
                 if not uri == '' and isExecutable:
-                    self.logger.warning(f"Debug: Execute command with type, min, max: {type},{min},{max}")
+                    self.logger.debug(f"Debug: Execute command with uri,tag,type, min, max, stepping, enumList: {uri},{tag},{type},{min},{max},{stepping},{enumList}")
                     return uri, tag, type, min, max, stepping, enumList  
                 break
 
@@ -709,16 +731,27 @@ class Vicare(SmartPlugin):
             self.logger.warning(f"Value {value} will be round to integer {int(value)}")
             value = int(value)
 
-        if len(enumList) > 0 and isinstance(value, str):
+        if enumList and len(enumList) > 0 and isinstance(value, str):
            if not value in enumList:
                self.logger.warning(f"controlItem: String value ({value}) is not in the list of allowed values ({enumList}). Aborting.")
                return
            else:
-               self.logger.warning(f"Debug SUCCES: Value is on postivie list.")
+               self.logger.warning(f"Debug SUCCES: Value is on positive list.")
 
-        jsonCommand = {tag: value}
+        # Some commands are sent without a value and only provide a url. 
+        # Therefore, only sent additional data for commands with valid (data) types.
+        jsonCommand = {}
+        if type is not None:
+            jsonCommand = {tag: value}
+        else:
+            # Items with no valid type would send the uri on every item state change. 
+            # Here, only allow commands to be sent on positive item values (== bool state True)
+            if not value:
+                self.logger.debug(f"controlItem: Supressing sending for command without additional data because item is false")
+                return
+            self.logger.debug(f"controlItem: Sending command without additional data because to data type is supported")
+
         data = json.dumps(jsonCommand)
-        
         self.logger.debug(f"Prepare control data: {data}")
         response = self.session.post(url, headers = headers, data = data, verify=False, timeout=4)
    

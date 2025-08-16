@@ -60,6 +60,11 @@ class KNX(SmartPlugin):
     PROVIDER_KNXMC = 'IP Router'
 
     def __init__(self, smarthome):
+        """Initializes the plugin."""
+
+        # call init code of parent class (SmartPlugin)
+        super().__init__()
+
         self.provider = self.get_parameter_value('provider')
         self.host = self.get_parameter_value('host')
         self.port = self.get_parameter_value('port')
@@ -88,7 +93,9 @@ class KNX(SmartPlugin):
         self.date_ga = self.get_parameter_value('date_ga')
         self._send_time_do = self.get_parameter_value('send_time')
         self._bm_separatefile = False
-        self._bm_format = "BM': {1} set {2} to {3}"
+        self._bm_format = "BM: {1} set {2} to {3}"
+        self._bm_format_send = "BM: Sending value {3} for GA {2}"
+        self._bm_format_poll = "BM: Polling value for GA {2}"
         self._startup_polling = {}
 
         # following needed for statistics
@@ -110,6 +117,8 @@ class KNX(SmartPlugin):
         elif busmonitor.lower() == 'logger':
             self._bm_separatefile = True
             self._bm_format = "{0};{1};{2};{3}"
+            self._bm_format_send = "{0};{1};{2};{3}"
+            self._bm_format_poll = "{0};{1};{2}"
             self._busmonitor = logging.getLogger("knx_busmonitor").info
             self.logger.info(self.translate("Using busmonitor (L) = '{}'").format(busmonitor))
         else:
@@ -241,6 +250,8 @@ class KNX(SmartPlugin):
             item = 'unknown item'
         if 'ga' in kwargs:
             self.groupread(kwargs['ga'])
+            if self._log_own_packets is True and self.alive:
+                self._busmonitor(self._bm_format_poll.format(self.get_instance_name(), 'POLL', kwargs["ga"]))
         else:
             self.logger.warning(self.translate('problem polling {}, no known ga').format(item))
 
@@ -605,7 +616,7 @@ class KNX(SmartPlugin):
             if self.logger.isEnabledFor(logging.DEBUG):
                 self.logger.debug("{} listen on and init with {}".format(item, ga))
             if Utils.get_type(ga) == 'list':
-                self.logger.warning("{} Problem while doing knx_init: Multiple GA specified in item definition, using first GA ({}) for reading value".format(item.id(), ga))
+                self.logger.warning("{} Problem while doing knx_init: Multiple GA specified in item definition, using first GA ({}) for reading value".format(item.property.path, ga))
                 ga = ga[0]
             if ga not in self.gal:
                 self.gal[ga] = {DPT: dpt, ITEMS: [item], LOGICS: []}
@@ -619,7 +630,7 @@ class KNX(SmartPlugin):
             if self.logger.isEnabledFor(logging.DEBUG):
                 self.logger.debug("{} listen on and init with cache {}".format(item, ga))
             if Utils.get_type(ga) == 'list':
-                self.logger.warning("{} Problem while reading KNX cache: Multiple GA specified in item definition, using first GA ({}) for reading cache".format(item.id(), ga))
+                self.logger.warning("{} Problem while reading KNX cache: Multiple GA specified in item definition, using first GA ({}) for reading cache".format(item.property.path, ga))
                 ga = ga[0]
             if ga not in self.gal:
                 self.gal[ga] = {DPT: dpt, ITEMS: [item], LOGICS: []}
@@ -639,7 +650,7 @@ class KNX(SmartPlugin):
                 if ga not in self.gar:
                     self.gar[ga] = {DPT: dpt, ITEM: item, LOGIC: None}
                 else:
-                    self.logger.warning("{} knx_reply ({}) already defined for {}".format(item.id(), ga, self.gar[ga][ITEM]))
+                    self.logger.warning("{} knx_reply ({}) already defined for {}".format(item.property.path, ga, self.gar[ga][ITEM]))
 
         if self.has_iattr(item.conf, KNX_SEND):
             if isinstance(self.get_iattr_value(item.conf, KNX_SEND), str):
@@ -662,10 +673,6 @@ class KNX(SmartPlugin):
                 randomwait = random.randrange(15)
                 next = self.shtime.now() + timedelta(seconds=poll_interval + randomwait)
                 self._startup_polling.update({item: {'ga': poll_ga, 'interval': poll_interval}})
-                '''
-                self._sh.scheduler.add(f'KNX poll {item}', self._poll,
-                                       value={ITEM: item, 'ga': poll_ga, 'interval': poll_interval}, next=next)
-                '''
             else:
                 self.logger.warning("Ignoring knx_poll for item {}: We need two parameters, one for the GA and one for the polling interval.".format(item))
                 pass
@@ -737,14 +744,14 @@ class KNX(SmartPlugin):
                     for ga in self.get_iattr_value(item.conf, KNX_SEND):
                         _value = item()
                         if self._log_own_packets is True:
-                            self._busmonitor(self._bm_format.format(self.get_instance_name(), 'SEND', ga, _value))
+                            self._busmonitor(self._bm_format_send.format(self.get_instance_name(), 'SEND', ga, _value))
                         self.groupwrite(ga, _value, self.get_iattr_value(item.conf, KNX_DPT))
             if self.has_iattr(item.conf, KNX_STATUS):
                 for ga in self.get_iattr_value(item.conf, KNX_STATUS):  # send status update
                     if ga != dest:
                         _value = item()
                         if self._log_own_packets is True:
-                            self._busmonitor(self._bm_format.format(self.get_instance_name(), 'STATUS', ga, _value))
+                            self._busmonitor(self._bm_format_send.format(self.get_instance_name(), 'STATUS', ga, _value))
                         self.groupwrite(ga, _value, self.get_iattr_value(item.conf, KNX_DPT))
 
 

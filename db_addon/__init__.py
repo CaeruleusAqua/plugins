@@ -31,12 +31,10 @@ import datetime
 import time
 import re
 import queue
-import threading
-import logging
 import pickle
 import operator
 from dateutil.relativedelta import relativedelta
-from typing import Union
+from typing import Union, List, Dict
 from dataclasses import dataclass, InitVar
 from collections import deque
 
@@ -46,7 +44,6 @@ from lib.item.item import Item
 from lib.shtime import Shtime
 from lib.plugin import Plugins
 from .webif import WebInterface
-from .item_attributes import *
 from .item_attributes_master import ITEM_ATTRIBUTES
 import lib.db
 
@@ -62,7 +59,7 @@ class DatabaseAddOn(SmartPlugin):
     Main class of the Plugin. Does all plugin specific stuff and provides the update functions for the items
     """
 
-    PLUGIN_VERSION = '1.2.7'
+    PLUGIN_VERSION = '1.2.10'
 
     def __init__(self, sh):
         """
@@ -72,7 +69,7 @@ class DatabaseAddOn(SmartPlugin):
         # Call init code of parent class (SmartPlugin)
         super().__init__()
 
-        self.logger.debug(f'Start of {self.get_shortname()} Plugin.')
+        self.logger.debug(f'Start of {self.get_fullname()} Plugin.')
 
         # get item and shtime instance
         self.shtime = Shtime.get_instance()
@@ -80,17 +77,15 @@ class DatabaseAddOn(SmartPlugin):
         self.plugins = Plugins.get_instance()
 
         # define cache dicts
-        self.pickle_data_validity_time = 600  # seconds after which the data saved in pickle are not valid anymore
-        self.current_values = {}  # Dict to hold min and max value of current day / week / month / year for items
-        self.previous_values = {}  # Dict to hold value of end of last day / week / month / year for items
-        self.item_cache = {}  # Dict to hold item_id, oldest_log_ts and oldest_entry for items
-        self.value_list_raw_data = {}
+        self.pickle_data_validity_time = 600        # seconds after which the data saved in pickle are not valid anymore
+        self.current_values = {}                    # Dict to hold min and max value of current day / week / month / year for items
+        self.previous_values = {}                   # Dict to hold value of end of last day / week / month / year for items
+        self.item_cache = {}                        # Dict to hold item_id, oldest_log_ts and oldest_entry for items
+        self.value_list_raw_data = {}               # Dict to hold value list raw data
 
         # define variables for database, database connection, working queue and status
         self.item_queue = queue.Queue()              # Queue containing all to be executed items
         self.update_item_delay_deque = deque()       # Deque for delay working of updated item values
-        # ToDo: Check if still needed
-        self.queue_consumer_thread = None            # Queue consumer thread
         self._db_plugin = None                       # object if database plugin
         self._db = None                              # object of database
         self.connection_data = None                  # connection data list of database
@@ -99,15 +94,16 @@ class DatabaseAddOn(SmartPlugin):
         self.item_attribute_search_str = 'database'  # attribute, on which an item configured for database can be identified
         self.last_connect_time = 0                   # mechanism for limiting db connection requests
         self.alive = None                            # Is plugin alive?
-        self.suspended = False                       # Is plugin activity suspended
         self.active_queue_item: str = '-'            # String holding item path of currently executed item
-        self.onchange_delay_time = 30
+        self.onchange_delay_time = 30                # delay time in seconds between change of database item start of reevaluation of db_addon item
+        self.database_item_list = []                 # list of needed database items
 
         # define default mysql settings
         self.default_connect_timeout = 60
         self.default_net_read_timeout = 60
 
         # define variables from plugin parameters
+        self._pause_item_path = self.get_parameter_value('pause_item')
         self.db_configname = self.get_parameter_value('database_plugin_config')
         self.startup_run_delay = self.get_parameter_value('startup_run_delay')
         self.ignore_0 = self.get_parameter_value('ignore_0')
@@ -118,7 +114,7 @@ class DatabaseAddOn(SmartPlugin):
 
         # path and filename for data storage
         data_storage_file = 'db_addon_data'
-        self.data_storage_path = f"{os.getcwd()}/var/plugin_data/{self.get_shortname()}/{data_storage_file}.pkl"
+        self.data_storage_path = f"{os.getcwd()}/var/plugin_data/{self.get_fullname()}/{data_storage_file}.pkl"
 
         # get debug log options
         self.debug_log = DebugLogOptions(self.log_level)
@@ -134,7 +130,7 @@ class DatabaseAddOn(SmartPlugin):
         Run method for the plugin
         """
 
-        self.logger.debug("Run method called")
+        self.logger.dbghigh(self.translate("Methode '{method}' aufgerufen", {'method': 'run()'}))
 
         # check existence of db-plugin, get parameters, and init connection to db
         if not self._check_db_existence():
@@ -169,40 +165,44 @@ class DatabaseAddOn(SmartPlugin):
         # update database_items in item config, where path was given
         self._update_database_items()
 
+        # create list if all relevant database items
+        self._create_list_of_relevant_database_items()
+
+        # let the plugin change the state of pause_item
+        if self._pause_item:
+            self._pause_item(False, self.get_fullname())
+
         # set plugin to alive
         self.alive = True
 
         # work item queue
         self.work_item_queue()
 
-        # ToDo: Check if still needed
-        """
-        try:
-            self._queue_consumer_thread_startup()
-        except Exception as e:
-            self.logger.warning(f"During working item queue Exception '{e}' occurred.")
-            self.logger.debug(e, exc_info=True)
-            # self.logger.error("Thread for working item queue died. De-init plugin.")
-            # self.deinit()
-            self.logger.error("Suspend Plugin and clear Item-Queue.")
-            self.suspend(True)
-        """
-
     def stop(self):
         """
         Stop method for the plugin
         """
 
-        self.logger.debug("Stop method called")
+        self.logger.dbghigh(self.translate("Methode '{method}' aufgerufen", {'method': 'stop()'}))
+
+        # set plugin to alive
         self.alive = False
-        self.scheduler_remove('cyclic')
-        self.scheduler_remove('onchange_delay')
+
+        # let the plugin change the state of pause_item
+        if self._pause_item:
+            self._pause_item(True, self.get_fullname())
+
+        # this stops all schedulers the plugin has started.
+        # self.scheduler_remove('cyclic')
+        # self.scheduler_remove('onchange_delay')
+        self.scheduler_remove_all()
+
+        # close db object
         if self._db:
             self._db.close()
-        self.save_cache_data()
 
-        # ToDo: Check if still needed
-        # self._queue_consumer_thread_shutdown()
+        # save cache data
+        self.save_cache_data()
 
     def parse_item(self, item: Item):
         """
@@ -223,269 +223,252 @@ class DatabaseAddOn(SmartPlugin):
 
             # get parameter
             db_addon_fct_vars = db_addon_fct.split('_')
-            func = timeframe = timedelta = start = end = group = group2 = data_con_func = log_text = None
-            required_params = None
+            func = timeframe = timedelta = start = end = group = group2 = data_con_func = None
+            mandatory_params = None
 
-            if db_addon_fct in HISTORIE_ATTRIBUTES_ONCHANGE:
-                # handle functions 'minmax onchange' in format 'minmax_timeframe_func' items like 'minmax_heute_max', 'minmax_heute_min', 'minmax_woche_max', 'minmax_woche_min'
-                timeframe = translate_timeframe(db_addon_fct_vars[1])
-                func = db_addon_fct_vars[2] if db_addon_fct_vars[2] in ALLOWED_MINMAX_FUNCS else None
-                start = end = 0
-                log_text = 'minmax_timeframe_func'
-                required_params = [func, timeframe, start, end]
+            # handle all functions of cat 'wertehistorie'
+            if db_addon_fct_cat == 'wertehistorie':
 
-            elif db_addon_fct in HISTORIE_ATTRIBUTES_LAST:
-                # handle functions 'minmax_last' in format 'minmax_last_timedelta|timeframe_function' like 'minmax_last_24h_max'
-                func = db_addon_fct_vars[3]
-                start, timeframe = split_sting_letters_numbers(db_addon_fct_vars[2])
-                start = to_int(start)
-                timeframe = translate_timeframe(timeframe)
-                end = 0
-                log_text = 'minmax_last_timedelta|timeframe_function'
-                required_params = [func, timeframe, start, end]
+                # handle functions of sub_cat 'onchange' like 'minmax_heute_max', 'minmax_heute_min', 'minmax_woche_max', 'minmax_woche_min'
+                if db_addon_fct_sub_cat == 'onchange':
+                    timeframe = translate_timeframe(db_addon_fct_vars[1])
+                    func = db_addon_fct_vars[2] if db_addon_fct_vars[2] in ALLOWED_MINMAX_FUNCS else None
+                    start = end = 0
+                    mandatory_params = [func, timeframe, start, end]
 
-            elif db_addon_fct in HISTORIE_ATTRIBUTES_TIMEFRAME:
-                # handle functions 'min/max/avg' in format 'minmax_timeframe_timedelta_func' like 'minmax_heute_minus2_max'
-                func = db_addon_fct_vars[3]  # min, max, avg
-                timeframe = translate_timeframe(db_addon_fct_vars[1])  # day, week, month, year
-                start = end = to_int(split_sting_letters_numbers(db_addon_fct_vars[2])[1])
-                log_text = 'minmax_timeframe_timedelta_func'
-                required_params = [func, timeframe, start, end]
+                # handle functions of sub_cat 'last' like 'minmax_last' in format 'minmax_last_timedelta|timeframe_function' like 'minmax_last_24h_max'
+                elif db_addon_fct_sub_cat == 'last':
+                    func = db_addon_fct_vars[3]
+                    start, timeframe = split_sting_letters_numbers(db_addon_fct_vars[2])
+                    start = to_int(start)
+                    timeframe = translate_timeframe(timeframe)
+                    end = 0
+                    mandatory_params = [func, timeframe, start, end]
 
-            elif db_addon_fct in ZAEHLERSTAND_ATTRIBUTES_TIMEFRAME:
-                # handle functions 'zaehlerstand' in format 'zaehlerstand_timeframe_timedelta' like 'zaehlerstand_heute_minus1'
-                func = 'last'
-                timeframe = translate_timeframe(db_addon_fct_vars[1])
-                start = end = to_int(split_sting_letters_numbers(db_addon_fct_vars[2])[1])
-                log_text = 'zaehlerstand_timeframe_timedelta'
-                required_params = [timeframe, start, end]
+                # handle functions of sub_cat 'timeframe' like 'min/max/avg' in format 'minmax_timeframe_timedelta_func' like 'minmax_heute_minus2_max'
+                elif db_addon_fct_sub_cat == 'timeframe':
+                    func = db_addon_fct_vars[3]  # min, max, avg
+                    timeframe = translate_timeframe(db_addon_fct_vars[1])  # day, week, month, year
+                    start = end = to_int(split_sting_letters_numbers(db_addon_fct_vars[2])[1])
+                    mandatory_params = [func, timeframe, start, end]
 
-            elif db_addon_fct in VERBRAUCH_ATTRIBUTES_ONCHANGE:
-                # handle functions 'verbrauch onchange' items in format 'verbrauch_timeframe' like 'verbrauch_heute', 'verbrauch_woche', 'verbrauch_monat', 'verbrauch_jahr'
-                timeframe = translate_timeframe(db_addon_fct_vars[1])
-                start = end = 0
-                log_text = 'verbrauch_timeframe'
-                required_params = [timeframe, start, end]
+            # handle all functions of cat 'zaehlerstand'
+            elif db_addon_fct_cat == 'zaehler':
 
-            elif db_addon_fct in VERBRAUCH_ATTRIBUTES_TIMEFRAME:
-                # handle functions 'verbrauch on-demand' in format 'verbrauch_timeframe_timedelta' like 'verbrauch_heute_minus2'
-                timeframe = translate_timeframe(db_addon_fct_vars[1])
-                start = end = to_int(split_sting_letters_numbers(db_addon_fct_vars[2])[1])
-                log_text = 'verbrauch_timeframe_timedelta'
-                required_params = [timeframe, start, end]
+                # handle functions of sub_cat 'timeframe' like 'zaehlerstand_timeframe_timedelta' like 'zaehlerstand_heute_minus1'
+                if db_addon_fct_sub_cat == 'timeframe':
+                    func = 'last'
+                    timeframe = translate_timeframe(db_addon_fct_vars[1])
+                    start = end = to_int(split_sting_letters_numbers(db_addon_fct_vars[2])[1])
+                    mandatory_params = [func, timeframe, start, end]
 
-            elif db_addon_fct in VERBRAUCH_ATTRIBUTES_LAST:
-                # handle functions 'verbrauch_last' in format 'verbrauch_last_timedelta|timeframe' like 'verbrauch_last_24h'
-                start, timeframe = split_sting_letters_numbers(db_addon_fct_vars[2])
-                start = to_int(start)
-                timeframe = translate_timeframe(timeframe)
-                end = 0
-                log_text = 'verbrauch_last_timedelta|timeframe'
-                required_params = [timeframe, start, end]
+            # handle all functions of cat 'verbrauch'
+            elif db_addon_fct_cat == 'verbrauch':
+                # 'start' ist das Zeitinkrement von jetzt (0) für den Zählerstand zu Beginn der Betrachtung; 'end' ist das Zeitinkrement von jetzt (0) für den Zählerstand zum Ende der Betrachtung
 
-            elif db_addon_fct in VERBRAUCH_ATTRIBUTES_ROLLING:
-                # handle functions 'verbrauch_on-demand' in format 'verbrauch_rolling_window_timeframe_timedelta' like 'verbrauch_rolling_12m_woche_minus1'
-                func = db_addon_fct_vars[1]
-                window_inc, window_dur = split_sting_letters_numbers(db_addon_fct_vars[2])
-                window_inc = to_int(window_inc)  # 12
-                window_dur = translate_timeframe(window_dur)  # day, week, month, year
-                timeframe = translate_timeframe(db_addon_fct_vars[3])  # day, week, month, year
-                end = to_int(split_sting_letters_numbers(db_addon_fct_vars[4])[1])
-                if window_dur in ALLOWED_QUERY_TIMEFRAMES and window_inc and timeframe and end:
-                    start = to_int(timeframe_to_timeframe(timeframe, window_dur) * window_inc) + end
-                log_text = 'verbrauch_rolling_window_timeframe_timedelta'
-                required_params = [func, timeframe, start, end]
+                # handle functions of sub_cat 'onchange' in format 'verbrauch_timeframe' like 'verbrauch_heute', 'verbrauch_woche', 'verbrauch_monat', 'verbrauch_jahr'
+                if db_addon_fct_sub_cat == 'onchange':
+                    timeframe = translate_timeframe(db_addon_fct_vars[1])
+                    end = 0
+                    start = end + 1
+                    mandatory_params = [timeframe, start, end]
 
-            elif db_addon_fct in VERBRAUCH_ATTRIBUTES_JAHRESZEITRAUM:
-                # handle functions of format 'verbrauch_jahreszeitraum_timedelta' like 'verbrauch_jahreszeitraum_minus1'
-                timeframe = translate_timeframe(db_addon_fct_vars[1])  # day, week, month, year
-                timedelta = to_int(split_sting_letters_numbers(db_addon_fct_vars[2])[1])
-                log_text = 'verbrauch_jahreszeitraum_timedelta'
-                required_params = [timeframe, timedelta]
+                # handle functions of sub_cat 'last' in format 'verbrauch_last_timedelta|timeframe' like 'verbrauch_last_24h'
+                elif db_addon_fct_sub_cat == 'last':
+                    start, timeframe = split_sting_letters_numbers(db_addon_fct_vars[2])
+                    start = to_int(start)
+                    timeframe = translate_timeframe(timeframe)
+                    end = 0
+                    mandatory_params = [timeframe, start, end]
 
-            elif db_addon_fct in TAGESMITTEL_ATTRIBUTES_ONCHANGE:
-                # handle functions 'tagesmitteltemperatur onchange' items in format 'tagesmitteltemperatur_timeframe' like 'tagesmitteltemperatur_heute', 'tagesmitteltemperatur_woche', 'tagesmitteltemperatur_monat', 'tagesmitteltemperatur_jahr'
-                timeframe = translate_timeframe(db_addon_fct_vars[1])
-                func = 'max'
-                start = end = 0
-                log_text = 'tagesmitteltemperatur_timeframe'
-                required_params = [timeframe, start, end]
+                # handle functions of sub_cat 'timeframe' in format 'verbrauch_timeframe_timedelta' like 'verbrauch_heute_minus2'
+                elif db_addon_fct_sub_cat == 'timeframe':
+                    timeframe = translate_timeframe(db_addon_fct_vars[1])
+                    end = to_int(split_sting_letters_numbers(db_addon_fct_vars[2])[1])
+                    start = end + 1
+                    mandatory_params = [timeframe, start, end]
 
-            elif db_addon_fct in TAGESMITTEL_ATTRIBUTES_TIMEFRAME:
-                # handle 'tagesmitteltemperatur_timeframe_timedelta' like 'tagesmitteltemperatur_heute_minus1'
-                func = 'max'
-                timeframe = translate_timeframe(db_addon_fct_vars[1])
-                start = end = to_int(split_sting_letters_numbers(db_addon_fct_vars[2])[1])
-                data_con_func = 'first_hour_avg_day'
-                log_text = 'tagesmitteltemperatur_timeframe_timedelta'
-                required_params = [func, timeframe, start, end, data_con_func]
+                # handle functions of sub_cat 'rolling' in format 'verbrauch_rolling_window_timeframe_timedelta' like 'verbrauch_rolling_12m_woche_minus1'
+                elif db_addon_fct_sub_cat == 'rolling':
+                    func = db_addon_fct_vars[1]
+                    window_inc, window_dur = split_sting_letters_numbers(db_addon_fct_vars[2])
+                    window_inc = to_int(window_inc)  # 12
+                    window_dur = translate_timeframe(window_dur)  # day, week, month, year
+                    timeframe = translate_timeframe(db_addon_fct_vars[3])  # day, week, month, year
+                    end = to_int(split_sting_letters_numbers(db_addon_fct_vars[4])[1])
+                    if window_dur in ALLOWED_QUERY_TIMEFRAMES and window_inc and timeframe and end:
+                        start = to_int(timeframe_to_timeframe(timeframe, window_dur) * window_inc) + end
+                    mandatory_params = [func, timeframe, start, end]
 
-            elif db_addon_fct in SERIE_ATTRIBUTES_MINMAX:
-                # handle functions 'serie_minmax' in format 'serie_minmax_timeframe_func_start|group' like 'serie_minmax_monat_min_15m'
-                func = db_addon_fct_vars[3]
-                timeframe = translate_timeframe(db_addon_fct_vars[2])
-                start, group = split_sting_letters_numbers(db_addon_fct_vars[4])
-                start = to_int(start)
-                group = translate_timeframe(group)
-                end = 0
-                log_text = 'serie_minmax_timeframe_func_start|group'
-                required_params = [func, timeframe, start, end, group]
+                # handle functions of sub_cat 'jahrzeit' in format 'verbrauch_jahreszeitraum_timedelta' like 'verbrauch_jahreszeitraum_minus1'
+                elif db_addon_fct_sub_cat == 'jahrzeit':
+                    timeframe = translate_timeframe(db_addon_fct_vars[1])  # day, week, month, year
+                    timedelta = to_int(split_sting_letters_numbers(db_addon_fct_vars[2])[1])
+                    mandatory_params = [timeframe, timedelta]
 
-            elif db_addon_fct in SERIE_ATTRIBUTES_ZAEHLERSTAND:
-                # handle functions 'serie_zaehlerstand' in format 'serie_zaehlerstand_timeframe_start|group' like 'serie_zaehlerstand_tag_30d'
-                timeframe = translate_timeframe(db_addon_fct_vars[2])
-                start, group = split_sting_letters_numbers(db_addon_fct_vars[3])
-                start = to_int(start)
-                group = translate_timeframe(group)
-                log_text = 'serie_zaehlerstand_timeframe_start|group'
-                required_params = [timeframe, start, group]
+            # handle all functions of cat 'tagesmittel'
+            elif db_addon_fct_cat == 'tagesmittel':
 
-            elif db_addon_fct in SERIE_ATTRIBUTES_VERBRAUCH:
-                # handle all functions of format 'serie_verbrauch_timeframe_start|group' like 'serie_verbrauch_tag_30d'
-                timeframe = translate_timeframe(db_addon_fct_vars[2])
-                start, group = split_sting_letters_numbers(db_addon_fct_vars[3])
-                start = to_int(start)
-                group = translate_timeframe(group)
-                log_text = 'serie_verbrauch_timeframe_start|group'
-                required_params = [timeframe, start, group]
+                # handle functions of sub_cat 'onchange' like 'tagesmitteltemperatur_timeframe' like 'tagesmitteltemperatur_heute', 'tagesmitteltemperatur_woche', 'tagesmitteltemperatur_monat', 'tagesmitteltemperatur_jahr'
+                if db_addon_fct_sub_cat == 'onchange':
+                    timeframe = translate_timeframe(db_addon_fct_vars[1])
+                    start = end = 0
+                    mandatory_params = [timeframe, start, end]
 
-            elif db_addon_fct in SERIE_ATTRIBUTES_SUMME:
-                # handle all summe in format 'serie_xxsumme_timeframe_count|group' like serie_waermesumme_monat_24m
-                func = 'sum_max'
-                start, timeframe = split_sting_letters_numbers(db_addon_fct_vars[3])
-                start = to_int(start)
-                timeframe = translate_timeframe(timeframe)
-                end = 0
-                group = 'day',
-                group2 = 'month'
-                log_text = 'serie_xxsumme_timeframe_count|group'
-                required_params = [func, timeframe, start, end, group, group2]
+                # handle functions of sub_cat 'timeframe' like 'tagesmitteltemperatur_timeframe_timedelta' like 'tagesmitteltemperatur_heute_minus1'
+                elif db_addon_fct_sub_cat == 'timeframe':
+                    timeframe = translate_timeframe(db_addon_fct_vars[1])
+                    start = end = to_int(split_sting_letters_numbers(db_addon_fct_vars[2])[1])
+                    data_con_func = 'first_hour_avg_day'
+                    mandatory_params = [timeframe, start, end, data_con_func]
 
-            elif db_addon_fct in SERIE_ATTRIBUTES_MITTEL_D:
-                # handle 'serie_tagesmittelwert_count|group' like 'serie_tagesmittelwert_0d' => Tagesmittelwert der letzten 0 Tage (also heute)
-                func = 'max'
-                timeframe = 'year'
-                start, group = split_sting_letters_numbers(db_addon_fct_vars[2])
-                start = to_int(start)
-                group = translate_timeframe(group)
-                end = 0
-                log_text = 'serie_tagesmittelwert_count|group'
-                required_params = [func, timeframe, start, end, group]
+            # handle all functions of cat 'serie'
+            elif db_addon_fct_cat == 'serie':
 
-            elif db_addon_fct in SERIE_ATTRIBUTES_MITTEL_H:
-                # handle 'serie_tagesmittelwert_group2_count|group' like 'serie_tagesmittelwert_stunde_0d' => Stundenmittelwerte der letzten 0 Tage (also heute)
-                func = 'avg1'
-                timeframe = 'day'
-                end = 0
-                group = 'hour'
-                start, group2 = split_sting_letters_numbers(db_addon_fct_vars[3])
-                start = to_int(start)
-                group2 = translate_timeframe(group2)
-                log_text = 'serie_tagesmittelwert_group2_count|group'
-                required_params = [func, timeframe, start, end, group, group2]
+                # handle functions of sub_cat 'wertehistorie' in format 'serie_minmax_timeframe_func_start|group' like 'serie_minmax_monat_min_15m'
+                if db_addon_fct_sub_cat == 'wertehistorie':
+                    func = db_addon_fct_vars[3]
+                    timeframe = translate_timeframe(db_addon_fct_vars[2])
+                    start, group = split_sting_letters_numbers(db_addon_fct_vars[4])
+                    start = to_int(start)
+                    group = translate_timeframe(group)
+                    end = 0
+                    mandatory_params = [func, timeframe, start, end, group]
 
-            elif db_addon_fct in SERIE_ATTRIBUTES_MITTEL_H1:
-                # handle 'serie_tagesmittelwert_stunde_start_end|group' like 'serie_tagesmittelwert_stunde_30_0d' => Stundenmittelwerte von vor 30 Tagen bis vor 0 Tagen (also heute)
-                data_con_func = 'avg_hour'
-                start = to_int(db_addon_fct_vars[3])
-                end, timeframe = split_sting_letters_numbers(db_addon_fct_vars[4])
-                end = to_int(end)
-                timeframe = translate_timeframe(timeframe)
-                log_text = 'serie_tagesmittelwert_stunde_start_end|group'
-                required_params = [timeframe, data_con_func, start, end]
+                # handle functions of sub_cat 'zaehler' in format 'serie_zaehlerstand_timeframe_start|group' like 'serie_zaehlerstand_tag_30d'
+                elif db_addon_fct_sub_cat == 'zaehler':
+                    timeframe = translate_timeframe(db_addon_fct_vars[2])
+                    start, group = split_sting_letters_numbers(db_addon_fct_vars[3])
+                    start = to_int(start)
+                    group = translate_timeframe(group)
+                    mandatory_params = [timeframe, start, group]
 
-            elif db_addon_fct in SERIE_ATTRIBUTES_MITTEL_D_H:
-                # handle 'serie_tagesmittelwert_tag_stunde_end|group' like 'serie_tagesmittelwert_tag_stunde_30d' => Tagesmittelwert auf Basis des Mittelwerts pro Stunden für die letzten 30 Tage
-                data_con_func = 'first_hour_avg_day'
-                end = 0
-                start, timeframe = split_sting_letters_numbers(db_addon_fct_vars[4])
-                start = to_int(start)
-                timeframe = translate_timeframe(timeframe)
-                log_text = 'serie_tagesmittelwert_tag_stunde_end|group'
-                required_params = [timeframe, data_con_func, start, end]
+                # handle functions of sub_cat 'verbrauch' in format 'serie_verbrauch_timeframe_start|group' like 'serie_verbrauch_tag_30d'
+                elif db_addon_fct_sub_cat == 'verbrauch':
+                    timeframe = translate_timeframe(db_addon_fct_vars[2])
+                    start, group = split_sting_letters_numbers(db_addon_fct_vars[3])
+                    start = to_int(start)
+                    group = translate_timeframe(group)
+                    mandatory_params = [timeframe, start, group]
 
-            elif db_addon_fct in ALL_GEN_ATTRIBUTES:
-                log_text = 'all_gen_attributes'
-                required_params = []
+                # handle functions of sub_cat 'summe' in format 'serie_xxsumme_timeframe_count|group' like serie_waermesumme_monat_24m
+                elif db_addon_fct_sub_cat == 'summe':
+                    func = 'sum_max'
+                    start, timeframe = split_sting_letters_numbers(db_addon_fct_vars[3])
+                    start = to_int(start)
+                    timeframe = translate_timeframe(timeframe)
+                    end = 0
+                    group = 'day',
+                    group2 = 'month'
+                    mandatory_params = [func, timeframe, start, end, group, group2]
 
-            if required_params is None:
-                self.logger.warning(f"For calculating '{db_addon_fct}' at Item '{item.path()}' no mandatory parameters given.")
-                return
+                # handle functions of sub_cat 'mittel_d' in format 'serie_tagesmittelwert_count|group' like 'serie_tagesmittelwert_0d' => Tagesmittelwert der letzten 0 Tage (also heute)
+                elif db_addon_fct_sub_cat == 'mittel_d':
+                    func = 'max'
+                    timeframe = 'year'
+                    start, group = split_sting_letters_numbers(db_addon_fct_vars[2])
+                    start = to_int(start)
+                    group = translate_timeframe(group)
+                    end = 0
+                    mandatory_params = [func, timeframe, start, end, group]
 
-            if required_params and None in required_params:
-                self.logger.warning(f"For calculating '{db_addon_fct}' at Item '{item.path()}' not all mandatory parameters given. Definitions are: {func=}, {timeframe=}, {timedelta=}, {start=}, {end=}, {group=}, {group2=}, {data_con_func=}")
-                return
+                # handle functions of sub_cat 'mittel_h' in format 'serie_tagesmittelwert_group2_count|group' like 'serie_tagesmittelwert_stunde_0d' => Stundenmittelwerte der letzten 0 Tage (also heute)
+                elif db_addon_fct_sub_cat == 'mittel_h':
+                    func = 'avg1'
+                    timeframe = 'day'
+                    end = 0
+                    group = 'hour'
+                    start, group2 = split_sting_letters_numbers(db_addon_fct_vars[3])
+                    start = to_int(start)
+                    group2 = translate_timeframe(group2)
+                    mandatory_params = [func, timeframe, start, end, group, group2]
 
-            # create dict and reduce dict to keys with value != None
-            param_dict = {'func': func, 'timeframe': timeframe, 'timedelta': timedelta, 'start': start, 'end': end, 'group': group, 'group2': group2, 'data_con_func': data_con_func}
+                # handle functions of sub_cat 'mittel_h1' in format 'serie_tagesmittelwert_stunde_start_end|group' like 'serie_tagesmittelwert_stunde_30_0d' => Stundenmittelwerte von vor 30 Tagen bis vor 0 Tagen (also heute)
+                elif db_addon_fct_sub_cat == 'mittel_h1':
+                    data_con_func = 'avg_hour'
+                    start = to_int(db_addon_fct_vars[3])
+                    end, timeframe = split_sting_letters_numbers(db_addon_fct_vars[4])
+                    end = to_int(end)
+                    timeframe = translate_timeframe(timeframe)
+                    mandatory_params = [timeframe, data_con_func, start, end]
 
-            # return reduced dict w keys with value != None
-            return {k: v for k, v in param_dict.items() if v is not None}
+                # handle functions of sub_cat 'mittel_d_h' in format 'serie_tagesmittelwert_tag_stunde_end|group' like 'serie_tagesmittelwert_tag_stunde_30d' => Tagesmittelwert auf Basis des Mittelwerts pro Stunden für die letzten 30 Tage
+                elif db_addon_fct_sub_cat == 'mittel_d_h':
+                    data_con_func = 'first_hour_avg_day'
+                    end = 0
+                    start, timeframe = split_sting_letters_numbers(db_addon_fct_vars[4])
+                    start = to_int(start)
+                    timeframe = translate_timeframe(timeframe)
+                    mandatory_params = [timeframe, data_con_func, start, end]
+
+            # handle functions of cat 'generic'
+            elif db_addon_fct_cat == 'gen':
+                mandatory_params = []
+
+            if mandatory_params is None:
+                self.logger.warning(f"For calculating '{db_addon_fct}' at Item '{item.property.path}' no mandatory parameters given.")
+                return None
+
+            if None in mandatory_params:
+                missing_params = [attr for attr, val in zip(['func', 'timeframe', 'timedelta', 'start', 'end', 'group', 'group2', 'data_con_func'], mandatory_params) if val is None]
+                self.logger.warning(f"Missing mandatory parameters for {db_addon_fct} at Item '{item.property.path}'. mandatory parameters={', '.join(missing_params)}")
+                return None
+
+            return {k: v for k, v in locals().items() if k in ['func', 'timeframe', 'timedelta', 'start', 'end', 'group', 'group2', 'data_con_func'] and v is not None}
 
         def get_query_parameters_from_db_addon_params() -> Union[dict, None]:
-            """derives parameters from item attribute db_addon_params, if parameter for db_addon_fct are not sufficient
-
-                possible_params may be given, if not, default value is used
-                required_params must be given
+            """Derives parameters from item attribute db_addon_params, if parameter for db_addon_fct are not sufficient.
+            Possible_params may be given if not, the default value is used. mandatory_params must be given.
             """
 
-            db_addon_params = params_to_dict(self.get_iattr_value(item.conf, 'db_addon_params'))
+            # get required, optional and additional params for db_addon_func
+            mandatory_params, optional_params, additional_params = item_attribute_dict['params']
 
-            if not db_addon_params:
-                db_addon_params = self.get_iattr_value(item.conf, 'db_addon_params_dict')
+            # get db_addon_params from item
+            db_addon_params = params_to_dict(self.get_iattr_value(item.conf, 'db_addon_params')) or self.get_iattr_value(item.conf, 'db_addon_params_dict') or {}
 
-            if not db_addon_params:
-                db_addon_params = {}
+            # check if all required params are given
+            if not all(param in db_addon_params for param in mandatory_params):
+                self.logger.warning(f"Item '{item.property.path}' with {db_addon_fct=} ignored, since not all mandatory parameters {mandatory_params=} in {db_addon_params=} are given.")
+                return None
 
-            new_db_addon_params = {}
-            possible_params = required_params = []
+            # reduce db_addon_params from item to (optional_params + mandatory_params)
+            new_db_addon_params = {k: v for k, v in db_addon_params.items() if k in (optional_params + mandatory_params)} if db_addon_params else {}
 
-            # create item config for all functions with 'summe' like waermesumme, kaeltesumme, gruenlandtemperatursumme
-            if db_addon_fct in ('kaeltesumme', 'waermesumme', 'gruenlandtempsumme'):
-                possible_params = ['year', 'month']
+            # check if parameter values are valid
+            if 'func' in new_db_addon_params:
+                if (db_addon_fct_cat == 'wertehistorie' and new_db_addon_params['func'] not in ALLOWED_MINMAX_FUNCS) or (db_addon_fct_cat == 'complex' and new_db_addon_params['func'] not in ALLOWED_QUERY_FUNCS):
+                    self.logger.warning(f"Parameter 'func'={new_db_addon_params['timeframe']} of item '{item.property.path}' not valid. Item will be ignored.")
+                    return None
 
-            # create item config for wachstumsgradtage attributes
-            elif db_addon_fct == 'wachstumsgradtage':
-                possible_params = ['year', 'variant', 'threshold', 'result']
+            if 'timeframe' in new_db_addon_params and new_db_addon_params['timeframe'] not in ALLOWED_QUERY_TIMEFRAMES:
+                self.logger.warning(f"Parameter 'timeframe'={new_db_addon_params['timeframe']} of item '{item.property.path}' not valid. Valid parameter values: {ALLOWED_QUERY_TIMEFRAMES}. Item will be ignored.")
+                return None
 
-            # create item config for kenntage attributes
-            elif db_addon_fct in ('wuestentage', 'heisse_tage', 'tropennaechte', 'sommertage', 'heiztage', 'vegetationstage', 'frosttage', 'eistage'):
-                possible_params = ['year', 'month']
+            for param in ['start', 'end', 'threshold']:
+                if param in new_db_addon_params:
+                    new_value = to_int(new_db_addon_params[param])
+                    if new_value is None:
+                        self.logger.warning(f"Parameter '{param}'={new_db_addon_params[param]} of item '{item.property.path}' not valid. Parameter value need to be integer. Item will be ignored.")
+                        return None
+                    else:
+                        new_db_addon_params[param] = new_value
 
-            # create item config for tagesmitteltemperatur
-            elif db_addon_fct == 'tagesmitteltemperatur':
-                possible_params = ['timeframe', 'count']
+            if 'year' in new_db_addon_params and not self._valid_year(new_db_addon_params['year']):
+                self.logger.warning(f"Parameter 'year'={new_db_addon_params['year']} of item '{item.property.path}' not valid. Item will be ignored.")
+                return None
 
-            # create item config for minmax
-            elif db_addon_fct == 'minmax':
-                required_params = ['func', 'timeframe', 'start']
+            if 'month' in new_db_addon_params and not self._valid_month(new_db_addon_params['month']):
+                self.logger.warning(f"Parameter 'month'={new_db_addon_params['month']} of item '{item.property.path}' not valid. Item will be ignored.")
+                return None
 
-            # create item config for minmax_last
-            elif db_addon_fct == 'minmax_last':
-                required_params = ['func', 'timeframe', 'start', 'end']
+            if 'result' in new_db_addon_params and new_db_addon_params['result'] not in ALLOWED_RESULT_TYPES:
+                self.logger.warning(f"Parameter 'result'={new_db_addon_params['result']} of item '{item.property.path}' not valid. Valid parameter values: {ALLOWED_RESULT_TYPES}. Item will be ignored.")
+                return None
 
-            # create item config for verbrauch
-            elif db_addon_fct == 'verbrauch':
-                required_params = ['timeframe', 'start', 'end']
-
-            # create item config for zaehlerstand
-            elif db_addon_fct == 'zaehlerstand':
-                required_params = ['timeframe', 'start']
-
-            # create item config for db_request and everything else (get_query_parameters_from_db_addon_fct)
-            else:
-                required_params = ['func', 'timeframe']
-                possible_params = ['start', 'end', 'group', 'group2', 'ignore_value_list', 'use_oldest_entry']
-
-            if required_params and not any(param in db_addon_params for param in required_params):
-                self.logger.warning(f"Item '{item.path()}' with {db_addon_fct=} ignored, since not all mandatory parameters in {db_addon_params=} are given. Item will be ignored.")
-                return
-
-            # reduce dict to possible keys + required_params
-            for key in possible_params + required_params:
-                value = db_addon_params.get(key)
-                if value:
-                    new_db_addon_params[key] = value
+            # add additional params
+            if additional_params:
+                new_db_addon_params.update(additional_params)
 
             return new_db_addon_params
 
@@ -499,10 +482,10 @@ class DatabaseAddOn(SmartPlugin):
             for i in range(3):
                 if self.has_iattr(_lookup_item.conf, 'db_addon_database_item'):
                     if self.debug_log.parse:
-                        self.logger.debug(f"Attribut 'db_addon_database_item' for item='{item.path()}' has been found {i} level above item at '{_lookup_item.path()}'.")
+                        self.logger.debug(f"Attribut 'db_addon_database_item' for item='{item.property.path}' has been found {i} level above item at '{_lookup_item.property.path}'.")
                     _database_item_path = self.get_iattr_value(_lookup_item.conf, 'db_addon_database_item')
                     if self.debug_log.parse:
-                        self.logger.debug(f"{_database_item_path=}, {_lookup_item.path()}")
+                        self.logger.debug(f"{_database_item_path=}, {_lookup_item.property.path}")
                     return _database_item_path, _lookup_item
                 else:
                     _lookup_item = _lookup_item.return_parent()
@@ -519,38 +502,12 @@ class DatabaseAddOn(SmartPlugin):
             for i in range(2):
                 if self.has_iattr(_lookup_item.conf, self.item_attribute_search_str):
                     if self.debug_log.parse:
-                        self.logger.debug(f"Attribut '{self.item_attribute_search_str}' for item='{item.path()}'  has been found {i + 1} level above item at '{_lookup_item.path()}'.")
+                        self.logger.debug(f"Attribut '{self.item_attribute_search_str}' for item='{item.property.path}'  has been found {i + 1} level above item at '{_lookup_item.property.path}'.")
                     return _lookup_item
                 else:
                     _lookup_item = _lookup_item.return_parent()
 
             return None, None
-
-        def has_db_addon_item() -> bool:
-            """Returns item from shNG config which is item with db_addon attribut valid for database item"""
-
-            for child in item.return_children():
-                if check_db_addon_fct(child):
-                    return True
-
-                for child_child in child.return_children():
-                    if check_db_addon_fct(child_child):
-                        return True
-
-                    for child_child_child in child_child.return_children():
-                        if check_db_addon_fct(child_child_child):
-                            return True
-
-            return False
-
-        def check_db_addon_fct(check_item) -> bool:
-            """
-            Check if item has db_addon_fct and is onchange
-            """
-            if self.has_iattr(check_item.conf, 'db_addon_fct'):
-                if self.get_iattr_value(check_item.conf, 'db_addon_fct').lower() in ONCHANGE_ATTRIBUTES:
-                    return True
-            return False
 
         def format_db_addon_ignore_value_list(optimize: bool = self.optimize_value_filter):
             """ Check of list of comparison operators is formally valid """
@@ -571,7 +528,7 @@ class DatabaseAddOn(SmartPlugin):
                         max_values[op].append(value)
 
             if self.debug_log.parse:
-                self.logger.debug(f"Summarized 'ignore_value_list' for item {item.path()}: {db_addon_ignore_value_list_formatted}")
+                self.logger.debug(f"Summarized 'ignore_value_list' for item {item.property.path}: {db_addon_ignore_value_list_formatted}")
 
             if not db_addon_ignore_value_list_formatted:
                 return
@@ -580,7 +537,7 @@ class DatabaseAddOn(SmartPlugin):
                 return db_addon_ignore_value_list_formatted
 
             if self.debug_log.parse:
-                self.logger.debug(f"Optimizing 'ignore_value_list' for item {item.path()} active.")
+                self.logger.debug(f"Optimizing 'ignore_value_list' for item {item.property.path} active.")
 
             # find low
             lower_value_list = max_values['<'] + max_values['<=']
@@ -611,22 +568,68 @@ class DatabaseAddOn(SmartPlugin):
                         db_addon_ignore_value_list_optimized.append(f'!= {v}')
 
             if self.debug_log.parse:
-                self.logger.debug(f"Optimized 'ignore_value_list' for item {item.path()}: {db_addon_ignore_value_list_optimized}")
+                self.logger.debug(f"Optimized 'ignore_value_list' for item {item.property.path}: {db_addon_ignore_value_list_optimized}")
 
             return db_addon_ignore_value_list_optimized
+
+        # ToDo: check new coding
+        def format_db_addon_ignore_value_list_new(_db_addon_ignore_value_list: List[str], debug_log=False) -> Union[List[str], None]:
+
+            max_values = {'!=': [], '>=': [], '<=': [], '>': [], '<': []}
+            db_addon_ignore_value_list_formatted = []
+
+            for _entry in _db_addon_ignore_value_list:
+                _entry = entry.strip()
+                for _op in max_values.keys():
+                    if _op in _entry:
+                        _, _value = _entry.split(_op, 1)
+                        _value = to_int_float(_value.strip())
+                        if _value is not None:
+                            db_addon_ignore_value_list_formatted.append(f"{_op} {_value}")
+                            max_values[_op].append(_value)
+
+            if debug_log:
+                self.logger.debug(f"Summarized 'ignore_value_list': {db_addon_ignore_value_list_formatted}")
+
+            if not db_addon_ignore_value_list_formatted:
+                return None
+
+            # Optimizing the list
+            lower_values = max(max_values['<'] + max_values['<='], default=None)
+            upper_values = min(max_values['>'] + max_values['>='], default=None)
+
+            db_addon_ignore_value_list_optimized = [
+                f"< {lower_values}" if lower_values is not None else None,
+                f"> {upper_values}" if upper_values is not None else None
+            ] + [f"!= {v}" for v in max_values['!='] if (not lower_values or v >= lower_values) and (not upper_values or v <= upper_values)]
+
+            db_addon_ignore_value_list_optimized = list(filter(None, db_addon_ignore_value_list_optimized))
+
+            if debug_log:
+                self.logger.debug(f"Optimized 'ignore_value_list': {db_addon_ignore_value_list_optimized}")
+
+            return db_addon_ignore_value_list_optimized
+
+        # check for pause item
+        if item.property.path == self._pause_item_path:
+            self.logger.debug(f'pause item {item.property.path} registered')
+            self._pause_item = item
+            self.add_item(item, updating=True)
+            return self.update_item
 
         # handle all items with db_addon_fct
         if self.has_iattr(item.conf, 'db_addon_fct'):
 
             if self.debug_log.parse:
-                self.logger.debug(f"parse item: {item.path()} due to 'db_addon_fct'")
+                self.logger.debug(f"parse item: {item.property.path} due to 'db_addon_fct'")
 
             # get db_addon_fct attribute value
             db_addon_fct = self.get_iattr_value(item.conf, 'db_addon_fct').lower()
 
             # read item_attribute_dict aus item_attributes_master
-            item_attribute_dict = ITEM_ATTRIBUTES['db_addon_fct'].get(db_addon_fct)
-            self.logger.debug(f"{db_addon_fct}: {item_attribute_dict=}")
+            item_attribute_dict = ITEM_ATTRIBUTES['db_addon_fct'].get(db_addon_fct, {})
+            db_addon_fct_cat = item_attribute_dict['cat']
+            db_addon_fct_sub_cat = item_attribute_dict['sub_cat']
 
             # get query parameters from db_addon_fct or db_addon_params
             if item_attribute_dict['params']:
@@ -645,7 +648,7 @@ class DatabaseAddOn(SmartPlugin):
             db_addon_ignore_value_list = self.get_iattr_value(database_item_definition_item.conf, 'db_addon_ignore_value_list')  # ['> 0', '< 35']
             db_addon_ignore_value = self.get_iattr_value(database_item_definition_item.conf, 'db_addon_ignore_value')  # num
             if database_item is None:
-                self.logger.warning(f"No database item found for item={item.path()}: Item ignored. Maybe you should check instance of database plugin.")
+                self.logger.warning(f"No database item found for item={item.property.path}: Item ignored. Maybe you should check instance of database plugin.")
                 return
             else:
                 if self.debug_log.parse:
@@ -658,12 +661,12 @@ class DatabaseAddOn(SmartPlugin):
             if db_addon_ignore_value:
                 db_addon_ignore_value_list.append(f"!= {db_addon_ignore_value}")
 
-            if any(x in str(item.path()) for x in self.ignore_0):
+            if any(x in str(item.property.path) for x in self.ignore_0):
                 db_addon_ignore_value_list.append("!= 0")
 
             if self.value_filter:
                 for entry in list(self.value_filter.keys()):
-                    if entry in str(item.path()):
+                    if entry in str(item.property.path):
                         db_addon_ignore_value_list.extend(self.value_filter[entry])
 
             if db_addon_ignore_value_list:
@@ -673,21 +676,19 @@ class DatabaseAddOn(SmartPlugin):
                 query_params.update({'ignore_value_list': db_addon_ignore_value_list_final})
 
             # create standard items config
-            item_config_data_dict = {'db_addon': 'function', 'db_addon_fct': db_addon_fct, 'database_item': database_item, 'query_params': query_params, 'suspended': False}
+            item_config_data_dict = {'db_addon': 'function', 'db_addon_fct': db_addon_fct, 'database_item': database_item, 'query_params': query_params, 'suspended': False, 'cat': db_addon_fct_cat, 'sub_cat': db_addon_fct_sub_cat}
             if isinstance(database_item, str):
                 item_config_data_dict.update({'database_item_path': True})
             else:
-                database_item = database_item.path()
+                database_item = database_item.property.path
 
             # do logging
             if self.debug_log.parse:
-                self.logger.debug(f"Item={item.path()} added with db_addon_fct={db_addon_fct} and database_item={database_item}")
-
-            # add type (onchange or ondemand) to item dict
-            item_config_data_dict.update({'on': item_attribute_dict['on']})
+                self.logger.debug(f"Item={item.property.path} added with db_addon_fct={db_addon_fct} and database_item={database_item}")
 
             # add cycle for item groups
-            cycle = item_attribute_dict['calc']
+            cycle = item_attribute_dict['cycle']
+            on = 'demand'
             if cycle == 'group':
                 cycle = item_config_data_dict['query_params'].get('group')
                 if not cycle:
@@ -696,13 +697,19 @@ class DatabaseAddOn(SmartPlugin):
             elif cycle == 'timeframe':
                 cycle = item_config_data_dict['query_params'].get('timeframe')
                 cycle = f"{timeframe_to_updatecyle(cycle)}"
-            elif cycle == 'None':
-                cycle = None
-            item_config_data_dict.update({'cycle': cycle})
+            elif not cycle:
+                on = 'change'
+            item_config_data_dict.update({'cycle': cycle, 'on': on})
 
             # do logging
             if self.debug_log.parse:
-                self.logger.debug(f"Item '{item.path()}' added to be run {item_config_data_dict['cycle']}.")
+                if cycle:
+                    self.logger.debug(f"Item '{item.property.path}' added to be run {item_config_data_dict['cycle']}.")
+                else:
+                    self.logger.debug(f"Item '{item.property.path}' added but will not be run cyclic.")
+
+                if on == 'change':
+                    self.logger.debug(f"Item '{item.property.path}' added and will be run on-change of {database_item}.")
 
             # create item config for item to be run on startup
             if db_addon_startup or item_attribute_dict['cat'] == 'gen':
@@ -711,26 +718,25 @@ class DatabaseAddOn(SmartPlugin):
                 item_config_data_dict.update({'startup': False})
 
             # add item to plugin item dict
+            if self.debug_log.parse:
+                self.logger.debug(f"Item '{item.property.path}' completely parsed: {item_config_data_dict=}.")
             self.add_item(item, config_data_dict=item_config_data_dict)
 
         # handle all items with db_addon_info
         elif self.has_iattr(item.conf, 'db_addon_info'):
             if self.debug_log.parse:
-                self.logger.debug(f"parse item={item.path()} due to used item attribute 'db_addon_info'")
-            self.add_item(item, config_data_dict={'db_addon': 'info', 'db_addon_fct': f"info_{self.get_iattr_value(item.conf, 'db_addon_info').lower()}", 'database_item': None, 'startup': True})
+                self.logger.debug(f"parse item={item.property.path} due to used item attribute 'db_addon_info'")
+            self.add_item(item, config_data_dict={'db_addon': 'info', 'db_addon_fct': f"info_{self.get_iattr_value(item.conf, 'db_addon_info').lower()}", 'database_item': None, 'startup': True, 'cat': 'info', 'sub_cat': None})
 
         # handle all items with db_addon_admin
         elif self.has_iattr(item.conf, 'db_addon_admin'):
             if self.debug_log.parse:
-                self.logger.debug(f"parse item={item.path()} due to used item attribute 'db_addon_admin'")
-            self.add_item(item, config_data_dict={'db_addon': 'admin', 'db_addon_fct': f"admin_{self.get_iattr_value(item.conf, 'db_addon_admin').lower()}", 'database_item': None})
+                self.logger.debug(f"parse item={item.property.path} due to used item attribute 'db_addon_admin'")
+            self.add_item(item, config_data_dict={'db_addon': 'admin', 'db_addon_fct': f"admin_{self.get_iattr_value(item.conf, 'db_addon_admin').lower()}", 'database_item': None, 'cat': 'admin', 'sub_cat': None})
             return self.update_item
 
-        # Reference to 'update_item' für alle Items mit Attribut 'database', um die on_change Items zu berechnen
-        elif self.has_iattr(item.conf, self.item_attribute_search_str) and has_db_addon_item():
-            if self.debug_log.parse:
-                self.logger.debug(f"reference to update_item for item={item.path()} will be set due to onchange")
-            self.add_item(item, config_data_dict={'db_addon': 'database'})
+        # Reference to 'update_item' for all database items to trigger calculation of on-change items
+        elif self.has_iattr(item.conf, self.item_attribute_search_str):
             return self.update_item
 
     def update_item(self, item, caller=None, source=None, dest=None):
@@ -745,28 +751,31 @@ class DatabaseAddOn(SmartPlugin):
         :param dest: if given it represents the dest
         """
 
-        if self.alive and caller != self.get_shortname():
+        # check for pause item
+        if item is self._pause_item:
+            if caller != self.get_fullname():
+                self.logger.debug(f'pause item changed to {item()}')
+                if item() and self.alive:
+                    self.stop()
+                elif not item() and not self.alive:
+                    self.run()
+            return
+
+        if self.alive and caller != self.get_fullname():
             # handle database items
             if item in self._database_items():
-                # if not self.startup_finished:
-                #     self.logger.info(f"Handling of 'onchange' is paused for startup. No updated will be processed.")
-                if self.suspended:
-                    self.logger.info(f"Plugin is suspended. No updated will be processed.")
-                else:
-                    self.logger.debug(f" Updated Item {item.path()} with value {item()} will be put to queue in approx. {self.onchange_delay_time}s resp. after startup.")
-                    self.update_item_delay_deque.append([item, item(), int(time.time() + self.onchange_delay_time)])
+                self.logger.debug(f" Updated Item {item.property.path} with value {item()} will be put to queue in approx. {self.onchange_delay_time}s resp. after startup.")
+                self.update_item_delay_deque.append([item, item(), int(time.time() + self.onchange_delay_time)])
 
             # handle admin items
             elif self.has_iattr(item.conf, 'db_addon_admin'):
                 self.logger.debug(f"update_item was called with item {item.property.path} from caller {caller}, source {source} and dest {dest}")
-                if self.get_iattr_value(item.conf, 'db_addon_admin') == 'suspend':
-                    self.suspend(item())
-                elif self.get_iattr_value(item.conf, 'db_addon_admin') == 'recalc_all':
+                if self.get_iattr_value(item.conf, 'db_addon_admin') == 'recalc_all':
                     self.execute_all_items()
-                    item(False, self.get_shortname())
+                    item(False, self.get_fullname())
                 elif self.get_iattr_value(item.conf, 'db_addon_admin') == 'clean_cache_values':
                     self._init_cache_dicts()
-                    item(False, self.get_shortname())
+                    item(False, self.get_fullname())
 
     def _save_pickle(self, data) -> None:
         """Saves received data as pickle to given file"""
@@ -857,7 +866,7 @@ class DatabaseAddOn(SmartPlugin):
         def clean_items_1(d):
             n_d = {}
             for item in d:
-                n_d[item.path()] = d[item]
+                n_d[item.property.path] = d[item]
             return n_d
 
         def clean_items_2(d):
@@ -865,7 +874,7 @@ class DatabaseAddOn(SmartPlugin):
             for timeframe in d:
                 n_d[timeframe] = {}
                 for item in d[timeframe]:
-                    n_d[timeframe][item.path()] = d[timeframe][item]
+                    n_d[timeframe][item.property.path] = d[timeframe][item]
             return n_d
 
         self._save_pickle({'current_values': clean_items_2(self.current_values),
@@ -949,16 +958,12 @@ class DatabaseAddOn(SmartPlugin):
                         _reset_items.update(set(self._onchange_yearly_items()))
 
             # reset der onchange items
-            [_item(0, self.get_shortname()) for _item in _reset_items]
+            [_item(0, self.get_fullname()) for _item in _reset_items]
 
             return list(_todo_items)
 
         if self.debug_log.execute:
             self.logger.debug(f"execute_items called with {option=}")
-
-        if self.suspended:
-            self.logger.info(f"Plugin is suspended. No items will be calculated.")
-            return
 
         suspended_items = self._suspended_items()
         if len(suspended_items) > 0:
@@ -1009,12 +1014,12 @@ class DatabaseAddOn(SmartPlugin):
             else:
                 if isinstance(queue_entry, tuple):
                     item, value = queue_entry
-                    self.logger.info(f"# {self.item_queue.qsize() + 1} item(s) to do. || 'onchange' item={item.path()} with {value=} will be processed.")
-                    self.active_queue_item = str(item.path())
+                    self.logger.info(f"# {self.item_queue.qsize() + 1} item(s) to do. || 'onchange' item={item.property.path} with {value=} will be processed.")
+                    self.active_queue_item = str(item.property.path)
                     self.handle_onchange(item, value)
                 else:
-                    self.logger.info(f"# {self.item_queue.qsize() + 1} item(s) to do. || 'on-demand' item={queue_entry.path()} will be processed.")
-                    self.active_queue_item = str(queue_entry.path())
+                    self.logger.info(f"# {self.item_queue.qsize() + 1} item(s) to do. || 'on-demand' item={queue_entry.property.path} will be processed.")
+                    self.active_queue_item = str(queue_entry.property.path)
                     self.handle_ondemand(queue_entry)
 
     def work_update_item_delay_deque(self):
@@ -1024,7 +1029,7 @@ class DatabaseAddOn(SmartPlugin):
             update_time = self.update_item_delay_deque[0][2]
             if update_time <= int(time.time()):
                 [item, value, *_] = self.update_item_delay_deque.popleft()
-                self.logger.info(f"+ Updated item '{item.path()}' with value {item()} is now due to be put to queue for processing. {self.item_queue.qsize() + 1} items to do.")
+                self.logger.info(f"+ Updated item '{item.property.path}' with value {item()} is now due to be put to queue for processing. {self.item_queue.qsize() + 1} items to do.")
                 self.item_queue.put((item, value))
             else:
                 self.logger.debug(f"Remaining {len(self.update_item_delay_deque)} items in deque are not due, yet.")
@@ -1039,9 +1044,13 @@ class DatabaseAddOn(SmartPlugin):
 
         # get parameters
         item_config = self.get_item_config(item)
+
         if self.debug_log.ondemand:
-            self.logger.debug(f"Item={item.path()} with {item_config=}")
+            self.logger.debug(f"Item={item.property.path} with {item_config=}")
+
         db_addon_fct = item_config['db_addon_fct']
+        db_addon_fct_cat = item_config['cat']
+        db_addon_fct_sub_cat = item_config['sub_cat']
         database_item = item_config['database_item']
         query_params = item_config.get('query_params')
         if query_params:
@@ -1050,45 +1059,53 @@ class DatabaseAddOn(SmartPlugin):
         else:
             params = {}
 
+        # set default result
+        result = None
+
         if self.debug_log.ondemand:
             self.logger.debug(f"{db_addon_fct=} will _query_item with {params=}.")
 
-        # handle item starting with 'verbrauch_'
-        if db_addon_fct in ALL_VERBRAUCH_ATTRIBUTES:
+        # handle all items of category 'verbrauch'
+        if db_addon_fct_cat == 'verbrauch':
             result = self._handle_verbrauch(params)
 
             if result and result < 0:
-                self.logger.info(f"Result of item {item.path()} with {db_addon_fct=} was negative. Something seems to be wrong.")
+                self.logger.info(f"Result of item {item.property.path} with {db_addon_fct=} was negative. Something seems to be wrong.")
 
-        # handle 'serie_verbrauch'
-        elif db_addon_fct in SERIE_ATTRIBUTES_VERBRAUCH:
-            result = self._handle_verbrauch_serie(params)
-
-        # handle item starting with 'zaehlerstand_'
-        elif db_addon_fct in ALL_ZAEHLERSTAND_ATTRIBUTES:
+        # handle all items of category 'zaehler'
+        elif db_addon_fct_cat == 'zaehler':
             result = self._handle_zaehlerstand(params)
 
-        # handle 'serie_zaehlerstand'
-        elif db_addon_fct in SERIE_ATTRIBUTES_ZAEHLERSTAND:
-            result = self._handle_zaehlerstand_serie(params)
+        # handle all items of category 'serie'
+        elif db_addon_fct_cat == 'serie':
 
-        # handle 'serie_tagesmittelwert_stunde_30_0d' and 'serie_tagesmittelwert_tag_stunde_30d'
-        elif db_addon_fct in SERIE_ATTRIBUTES_MITTEL_H1 + SERIE_ATTRIBUTES_MITTEL_D_H:
-            result = self._prepare_value_list(**params)
+            # handle all items of sub_category 'verbrauch'
+            if db_addon_fct_sub_cat == 'verbrauch':
+                result = self._handle_verbrauch_serie(params)
 
-        # handle TAGESMITTEL_ATTRIBUTES_TIMEFRAME like tagesmitteltemperatur_heute_minus1
-        elif db_addon_fct in TAGESMITTEL_ATTRIBUTES_TIMEFRAME:
+            # handle all items of sub_category 'zaehler'
+            elif db_addon_fct_sub_cat == 'zaehler':
+                result = self._handle_zaehlerstand_serie(params)
 
-            params.update({'data_con_func': 'first_hour_avg_day'})
-            _result = self._prepare_value_list(**params)
+            # handle items of sub_category 'mittel_h1' and 'mittel_h_d' like 'serie_tagesmittelwert_stunde_30_0d' and 'serie_tagesmittelwert_tag_stunde_30d'
+            elif db_addon_fct_sub_cat in ['mittel_h1', 'mittel_h_d']:
+                result = self._prepare_value_list(**params)
 
-            if isinstance(_result, list):
-                result = _result[0][1]
-            else:
-                result = None
+        # handle all items of category 'tagesmittel'
+        elif db_addon_fct_cat == 'tagesmittel':
 
-        # handle all functions using temperature sums
-        elif db_addon_fct in ALL_SUMME_ATTRIBUTES:
+            # handle all items of sub_category 'timeframe' like tagesmitteltemperatur_heute_minus1
+            if db_addon_fct_sub_cat == 'timeframe':
+                _result = self._prepare_value_list(**params)
+
+                if isinstance(_result, list):
+                    result = _result[0][1]
+
+            elif db_addon_fct_sub_cat == 'complex':
+                result = self._prepare_value_list(**params)
+
+        # handle all items of category 'summe'
+        elif db_addon_fct_cat == 'summe':
             new_params = {}
             for entry in ('threshold', 'variant', 'result', 'data_con_func'):
                 if entry in params:
@@ -1107,23 +1124,23 @@ class DatabaseAddOn(SmartPlugin):
         elif db_addon_fct == 'general_oldest_log':
             result = self._get_oldest_log(database_item)
 
-        # handle everything else
+        # handle everything else link db_request, minmax
         else:
             result = self._query_item(**params)[0][1]
 
         # log result
         if self.debug_log.ondemand:
-            self.logger.debug(f"result is {result} for item '{item.path()}' with '{db_addon_fct=}'")
+            self.logger.debug(f"result is {result} for item '{item.property.path}' with '{db_addon_fct=}'")
 
         if result is None:
             self.logger.info(f"  Result was None; No item value will be set.")
             return
 
         # set item value and put data into plugin_item_dict
-        self.logger.info(f"  Item value for '{item.path()}' will be set to {result}")
+        self.logger.info(f"  Item value for '{item.property.path}' will be set to {result}")
         item_config = self.get_item_config(item)
         item_config.update({'value': result})
-        item(result, self.get_shortname())
+        item(result, self.get_fullname())
 
     def handle_onchange(self, updated_item: Item, value: float) -> None:
         """
@@ -1138,7 +1155,7 @@ class DatabaseAddOn(SmartPlugin):
             init = False
 
             if self.debug_log.onchange:
-                self.logger.debug(f"'minmax' Item={updated_item.path()} with {func=} and {timeframe=} detected. Check for update of cache_dicts {cache_dict=} and item value.")
+                self.logger.debug(f"'minmax' Item={updated_item.property.path} with {func=} and {timeframe=} detected. Check for update of cache_dicts {cache_dict=} and item value.")
 
             # make sure, that database item is in cache dict
             if database_item not in cache_dict:
@@ -1148,14 +1165,14 @@ class DatabaseAddOn(SmartPlugin):
             cached_value = cache_dict[database_item].get(func)
             if cached_value is None:
                 if self.debug_log.onchange:
-                    self.logger.debug(f"{func} value for {timeframe=} of item={updated_item.path()} not in cache dict. Query database.")
+                    self.logger.debug(f"{func} value for {timeframe=} of item={updated_item.property.path} not in cache dict. Query database.")
 
                 query_params = {'func': func, 'database_item': database_item, 'timeframe': timeframe, 'start': 0, 'end': 0, 'ignore_value_list': ignore_value_list, 'use_oldest_entry': True}
                 cached_value = self._query_item(**query_params)[0][1]
 
                 if cached_value is None:
                     if self.debug_log.onchange:
-                        self.logger.debug(f"{func} value for {timeframe=} of item={updated_item.path()} not available in database. Abort calculation.")
+                        self.logger.debug(f"{func} value for {timeframe=} of item={updated_item.property.path} not available in database. Abort calculation.")
                     return
 
                 init = True
@@ -1163,7 +1180,7 @@ class DatabaseAddOn(SmartPlugin):
             # if value not given
             if init:
                 if self.debug_log.onchange:
-                    self.logger.debug(f"initial {func} value for {timeframe=} of item={item.path()} with will be set to {cached_value}")
+                    self.logger.debug(f"initial {func} value for {timeframe=} of item={item.property.path} with will be set to {cached_value}")
                 cache_dict[database_item][func] = cached_value
                 return cached_value
 
@@ -1190,25 +1207,25 @@ class DatabaseAddOn(SmartPlugin):
             cache_dict = self.previous_values[timeframe]
 
             if self.debug_log.onchange:
-                self.logger.debug(f"'verbrauch' item {updated_item.path()} with {func=} and {value=} detected. Check for update of cache_dicts {cache_dict=} and item value.")
+                self.logger.debug(f"'verbrauch' item {updated_item.property.path} with {func=} and {value=} detected. Check for update of cache_dicts {cache_dict=} and item value.")
 
             # get _cached_value for value at end of last period; if not already cached, create cache
             cached_value = cache_dict.get(database_item)
             if cached_value is None:
                 if self.debug_log.onchange:
-                    self.logger.debug(f"Most recent value for last {timeframe=} of item={updated_item.path()} not in cache dict. Query database.")
+                    self.logger.debug(f"Most recent value for last {timeframe=} of item={updated_item.property.path} not in cache dict. Query database.")
 
                 # try to get most recent value of last timeframe, assuming that this is the value at end of last timeframe
                 query_params = {'database_item': database_item, 'timeframe': timeframe, 'start': 1, 'end': 1, 'ignore_value_list': ignore_value_list, 'use_oldest_entry': True}
                 cached_value = self._handle_zaehlerstand(query_params)
 
                 if cached_value is None:
-                    self.logger.info(f"Most recent value for last {timeframe} of item={updated_item.path()} not available in database. Abort calculation.")
+                    self.logger.info(f"Most recent value for last {timeframe} of item={updated_item.property.path} not available in database. Abort calculation.")
                     return
 
                 cache_dict[database_item] = cached_value
                 if self.debug_log.onchange:
-                    self.logger.debug(f"Value for Item={updated_item.path()} at end of last {timeframe} not in cache dict. Value={cached_value} has been added.")
+                    self.logger.debug(f"Value for Item={updated_item.property.path} at end of last {timeframe} not in cache dict. Value={cached_value} has been added.")
 
             # calculate value, set item value, put data into plugin_item_dict
             _new_value = value - cached_value
@@ -1221,7 +1238,7 @@ class DatabaseAddOn(SmartPlugin):
                 return result[0][1]
 
         if self.debug_log.onchange:
-            self.logger.debug(f"called with updated_item={updated_item.path()} and value={value}.")
+            self.logger.debug(f"called with updated_item={updated_item.property.path} and value={value}.")
 
         relevant_item_list = set(self.get_item_list('database_item', updated_item)) & set(self.get_item_list('on', 'change'))
 
@@ -1231,39 +1248,37 @@ class DatabaseAddOn(SmartPlugin):
         for item in relevant_item_list:
             item_config = self.get_item_config(item)
             if self.debug_log.onchange:
-                self.logger.debug(f"Item={item.path()} with {item_config=}")
-            db_addon_fct = item_config['db_addon_fct']
+                self.logger.debug(f"Item={item.property.path} with {item_config=}")
+            db_addon_fct_cat = item_config['cat']
+            db_addon_fct_sub_cat = item_config['sub_cat']
             database_item = item_config['database_item']
             timeframe = item_config['query_params']['timeframe']
             func = item_config['query_params'].get('func')
             ignore_value_list = item_config['query_params'].get('ignore_value_list')
             new_value = None
 
-            # handle all non on_change functions
-            if db_addon_fct not in ONCHANGE_ATTRIBUTES:
+            # handle all on_demand functions
+            if db_addon_fct_sub_cat != 'onchange':
                 if self.debug_log.onchange:
-                    self.logger.debug(f"non onchange function detected. Skip update.")
+                    self.logger.debug(f"on demand function detected. Skip update.")
                 continue
 
-            # handle minmax onchange items tagesmitteltemperatur_heute, minmax_heute_avg
-            if db_addon_fct in TAGESMITTEL_ATTRIBUTES_ONCHANGE:
+            # handle onchange tagesmittel items like tagesmitteltemperatur_heute
+            if db_addon_fct_cat == 'tagesmittel':
                 new_value = handle_tagesmittel()
 
-            # handle minmax onchange items like minmax_heute_max, minmax_heute_min, minmax_woche_max, minmax_woche_min.....
-            elif db_addon_fct.startswith('minmax'):
+            # handle all onchange wertehistorie items like minmax_heute_max, minmax_heute_min, minmax_woche_max, minmax_woche_min.....
+            elif db_addon_fct_cat == 'wertehistorie':
                 new_value = handle_minmax()
 
-            # handle verbrauch onchange items ending with heute, woche, monat, jahr
-            elif db_addon_fct.startswith('verbrauch'):
+            # handle onchange verbrauch items like verbrauch_heute
+            elif db_addon_fct_cat == 'verbrauch':
                 new_value = handle_verbrauch()
 
-            if new_value is None:
-                continue
-
-            self.logger.info(f"  Item value for '{item.path()}' with func={func} will be set to {new_value}")
+            self.logger.info(f"  Item value for '{item.property.path}' with func={func} will be set to {new_value}")
             item_config = self.get_item_config(item)
             item_config.update({'value': new_value})
-            item(new_value, self.get_shortname())
+            item(new_value, self.get_fullname())
 
     def _update_database_items(self) -> None:
         """Turns given as database_item path into database_items"""
@@ -1273,16 +1288,17 @@ class DatabaseAddOn(SmartPlugin):
             database_item = self.items.return_item(database_item_path)
 
             if database_item is None:
-                self.logger.warning(f"Database-Item for Item with config item path for Database-Item {database_item_path!r} not found. Item '{item.path()}' will be removed from plugin.")
+                self.logger.warning(f"Database-Item for Item with config item path for Database-Item {database_item_path!r} not found. Item '{item.property.path}' will be removed from plugin.")
                 self.remove_item(item)
             else:
                 item_config.update({'database_item': database_item})
                 db_addon_startup = bool(self.get_iattr_value(database_item.conf, 'db_addon_startup'))
+                del item_config['database_item_path']
                 if db_addon_startup:
                     item_config.update({'startup': True})
 
     def _suspend_item_calculation(self, item: Union[str, Item], suspended: bool = False) -> Union[bool, None]:
-        """suspend calculation od decicated item"""
+        """suspend calculation of dedicated item"""
         if isinstance(item, str):
             item = self.items.return_item(item)
 
@@ -1292,6 +1308,16 @@ class DatabaseAddOn(SmartPlugin):
         item_config = self.get_item_config(item)
         item_config['suspended'] = suspended
         return suspended
+
+    def _create_list_of_relevant_database_items(self):
+        """creates list of all relevant database items for further reference"""
+        _database_items = set()
+        for item in self.get_item_list('database_item'):
+            item_config = self.get_item_config(item)
+            database_item = item_config.get('database_item')
+            if database_item is not None:
+                _database_items.add(database_item)
+        self.database_item_list = list(_database_items)
 
     @property
     def log_level(self) -> int:
@@ -1367,7 +1393,7 @@ class DatabaseAddOn(SmartPlugin):
         return self.get_item_list('db_addon', 'info')
 
     def _database_items(self) -> list:
-        return self.get_item_list('db_addon', 'database')
+        return self.database_item_list
 
     def _database_item_path_items(self) -> list:
         return self.get_item_list('database_item_path', True)
@@ -1383,7 +1409,7 @@ class DatabaseAddOn(SmartPlugin):
     #   Public functions / Using item_path
     #########################################
 
-    def gruenlandtemperatursumme(self, item_path: str, year: Union[int, str] = None, ignore_value_list: list = None) -> Union[int, None]:
+    def gruenlandtemperatursumme(self, item_path: str, year: Union[int, str] = None, ignore_value_list: list = None, result: str = 'total') -> Union[int, None]:
         """
         Query database for gruenlandtemperatursumme for given year or year
         https://de.wikipedia.org/wiki/Gr%C3%BCnlandtemperatursumme
@@ -1395,14 +1421,15 @@ class DatabaseAddOn(SmartPlugin):
         :param item_path: item object or item_id for which the query should be done
         :param year: year the gruenlandtemperatursumme should be calculated for
         :param ignore_value_list: list of comparison operators for val_num, which will be applied during query
+        :param result: total-Gesamtwert, month-Serie mit Monatswerten, day-Serie mit Tageswerten (default: total)
         :return: gruenlandtemperatursumme
         """
 
         item = self.items.return_item(item_path)
         if item:
-            return self._handle_temp_sums(func='gruendlandtempsumme', database_item=item, year=year, ignore_value_list=ignore_value_list)
+            return self._handle_temp_sums(func='gruendlandtempsumme', database_item=item, year=year, ignore_value_list=ignore_value_list, params={'result': result})
 
-    def waermesumme(self, item_path: str, year: Union[int, str] = None, month: Union[int, str] = None, ignore_value_list: list = None, threshold: int = 0) -> Union[int, None]:
+    def waermesumme(self, item_path: str, year: Union[int, str] = None, month: Union[int, str] = None, ignore_value_list: list = None, threshold: int = 0, result: str = 'total') -> Union[int, None]:
         """
         Query database for waermesumme for given year or year/month
         https://de.wikipedia.org/wiki/W%C3%A4rmesumme
@@ -1412,14 +1439,15 @@ class DatabaseAddOn(SmartPlugin):
         :param month: month the waermesumme should be calculated for
         :param ignore_value_list: list of comparison operators for val_num, which will be applied during query
         :param threshold: threshold for temperature
+        :param result: total-Gesamtwert, month-Serie mit Monatswerten, day-Serie mit Tageswerten (default: total)
         :return: waermesumme
         """
 
         item = self.items.return_item(item_path)
         if item:
-            return self._handle_temp_sums(func='waermesumme', database_item=item, year=year, month=month, ignore_value_list=ignore_value_list, params={'threshold': threshold})
+            return self._handle_temp_sums(func='waermesumme', database_item=item, year=year, month=month, ignore_value_list=ignore_value_list, params={'threshold': threshold, 'result': result})
 
-    def kaeltesumme(self, item_path: str, year: Union[int, str] = None, month: Union[int, str] = None, ignore_value_list: list = None) -> Union[int, None]:
+    def kaeltesumme(self, item_path: str, year: Union[int, str] = None, month: Union[int, str] = None, ignore_value_list: list = None, result: str = 'total') -> Union[int, None]:
         """
         Query database for kaeltesumme for given year or year/month
         https://de.wikipedia.org/wiki/K%C3%A4ltesumme
@@ -1428,14 +1456,15 @@ class DatabaseAddOn(SmartPlugin):
         :param year: year the kaeltesumme should be calculated for
         :param month: month the kaeltesumme should be calculated for
         :param ignore_value_list: list of comparison operators for val_num, which will be applied during query
+        :param result: total-Gesamtwert, month-Serie mit Monatswerten, day-Serie mit Tageswerten (default: total)
         :return: kaeltesumme
         """
 
         item = self.items.return_item(item_path)
         if item:
-            return self._handle_temp_sums(func='kaeltesumme', database_item=item, year=year, month=month, ignore_value_list=ignore_value_list)
+            return self._handle_temp_sums(func='kaeltesumme', database_item=item, year=year, month=month, ignore_value_list=ignore_value_list, params={'result': result})
 
-    def wachstumsgradtage(self, item_path: str, year: Union[int, str] = None, ignore_value_list: list = None, variant: int = 0, threshold: int = 10) -> Union[int, None]:
+    def wachstumsgradtage(self, item_path: str, year: Union[int, str] = None, ignore_value_list: list = None, variant: int = 0, threshold: int = 10, result: str = 'total') -> Union[int, None]:
         """
         Query database for wachstumsgradtage
         https://de.wikipedia.org/wiki/Wachstumsgradtag
@@ -1445,12 +1474,13 @@ class DatabaseAddOn(SmartPlugin):
         :param ignore_value_list: list of comparison operators for val_num, which will be applied during query
         :param variant: variant to be used
         :param threshold: Temperature in °C as threshold: Ein Tage mit einer Tagesdurchschnittstemperatur oberhalb des Schwellenwertes gilt als Wachstumsgradtag
+        :param result: total-Gesamtwert, month-Serie mit Monatswerten, day-Serie mit Tageswerten (default: total)
         :return: wachstumsgradtage
         """
 
         item = self.items.return_item(item_path)
         if item:
-            return self._handle_temp_sums(func='wachstumsgradtage', database_item=item, year=year, ignore_value_list=ignore_value_list, params={'threshold': threshold, 'variant': variant})
+            return self._handle_temp_sums(func='wachstumsgradtage', database_item=item, year=year, ignore_value_list=ignore_value_list, params={'threshold': threshold, 'variant': variant, 'result': result})
 
     def temperaturserie(self, item_path: str, year: Union[int, str] = None, ignore_value_list: list = None, data_con_func: str = 'first_hour_avg_day') -> Union[list, None]:
         """
@@ -1537,28 +1567,6 @@ class DatabaseAddOn(SmartPlugin):
 
         return self._fetchall(query, params)
 
-    def suspend(self, state: bool = False) -> bool:
-        """
-        Will pause value evaluation of plugin
-
-        """
-
-        if state:
-            self.logger.info("Plugin is set to 'suspended'. Queries to database will not be made until suspension is cleared.")
-            self.suspended = True
-            self._clear_queue()
-        else:
-            self.logger.info("Plugin suspension cleared. Queries to database will be resumed.")
-            self.suspended = False
-
-        # write back value to item, if one exists
-        for item in self.get_item_list('db_addon', 'admin'):
-            item_config = self.get_item_config(item)
-            if item_config['db_addon_fct'] == 'suspend':
-                item(self.suspended, self.get_shortname())
-
-        return self.suspended
-
     ##############################################
     #   Calculation methods / Using Item Object
     ##############################################
@@ -1575,7 +1583,7 @@ class DatabaseAddOn(SmartPlugin):
                 - Ergibt diese Abfrage keinen Wert, Anfangszählerstand = 0
         """
 
-        # define start, end for verbrauch_jahreszeitraum_timedelta
+        # define start, end for verbrauch_jahreszeitraum_timedelta like 'verbrauch_jahreszeitraum_minus1'
         if 'timedelta' in query_params:
             timedelta = query_params.pop('timedelta')
             today = self.shtime.today(offset=0)
@@ -1583,16 +1591,18 @@ class DatabaseAddOn(SmartPlugin):
             end_date = today - relativedelta(years=timedelta)
             start = (today - start_date).days
             end = (today - end_date).days
-        else:
-            start = query_params['start']
-            end = query_params['end']
+            query_params.update({'start': start, 'end': end})
 
         # calculate consumption
         if self.debug_log.prepare:
             self.logger.debug(f"called with {query_params=}")
 
-        # get value for end and check it;
-        query_params.update({'func': 'last', 'start': start, 'end': end})
+        # extract start and end out of query_params
+        _start = query_params.pop('start')
+        _end = query_params.pop('end')
+
+        # get value for end and check it
+        query_params.update({'func': 'last', 'start': _end, 'end': _end})
         value_end = self._query_item(**query_params)[0][1]
 
         if self.debug_log.prepare:
@@ -1601,8 +1611,9 @@ class DatabaseAddOn(SmartPlugin):
         if value_end is None or value_end == 0:
             return value_end
 
-        # get value for start and check it;
-        query_params.update({'func': 'next', 'start': start, 'end': start})
+        # get value for start and check it
+        # ToDo: Check if right start and end is used
+        query_params.update({'func': 'next', 'start': _start, 'end': _start})
         value_start = self._query_item(**query_params)[0][1]
         if self.debug_log.prepare:
             self.logger.debug(f"{value_start=}")
@@ -1636,15 +1647,17 @@ class DatabaseAddOn(SmartPlugin):
 
         for i in range(start, 1, -1):
             value = self._handle_verbrauch({'database_item': database_item, 'timeframe': timeframe, 'start': i + 1, 'end': i})
-            ts_start, ts_end = self._get_start_end_as_timestamp(timeframe, i, i + 1)
+            # ToDo: check ts_start, ts_end
+            ts_start, ts_end = self._get_start_end_as_timestamp(timeframe=timeframe, start=(i + 1), end=i)
+            if self.debug_log.prepare:
+                self.logger.debug(f"{ts_start=}, {ts_end=}")
             series.append([ts_end, value])
 
         return series
 
+    # ToDo: Test method
     def _handle_verbrauch_serie_new(self, query_params: dict) -> list:
         """Ermittlung einer Serie von Verbräuchen in einem Zeitraum für x Zeiträume"""
-
-        # ToDo: Test method
 
         query_params.update({'data_con_func': 'max_day', 'cache': True})
         raw_data = self._prepare_value_list(**query_params)
@@ -1679,6 +1692,7 @@ class DatabaseAddOn(SmartPlugin):
         # get last value of timeframe
         query_params.update({'func': 'next'})
         last_value = self._query_item(**query_params)[0][1]
+
         if self.debug_log.prepare:
             self.logger.debug(f"{last_value=}")
 
@@ -1709,10 +1723,9 @@ class DatabaseAddOn(SmartPlugin):
 
         return series
 
+    # ToDo: Test method
     def _handle_zaehlerstand_serie_new(self, query_params: dict) -> list:
         """Ermittlung einer Serie von Zählerständen zum Ende eines Zeitraumes für x Zeiträume"""
-
-        # ToDo: Test method
 
         query_params.update({'data_con_func': 'max_day', 'cache': True})
         raw_data = self._prepare_value_list(**query_params)
@@ -1739,17 +1752,19 @@ class DatabaseAddOn(SmartPlugin):
         
         :param func: defines which temperature sum or count should be calculated
         :param database_item: item object or item_id for which the query should be done
-        :param year: year the kaeltesumme should be calculated for
-        :param month: month the kaeltesumme should be calculated for
+        :param year: year the temperature should be calculated for
+        :param month: month the temperature should be calculated for
         :param params: params to be used for executing function (see below)
         :return: temperature sum or day count
         
         - kaeltesumme: Kältesumme nach https://de.wikipedia.org/wiki/K%C3%A4ltesumme
+                params: result
         - waermesumme: Wärmesumme https://de.wikipedia.org/wiki/W%C3%A4rmesumme
-                params: threshold
+                params: threshold, result
         - gruenlandtempsumme: Grünlandtemperatursumme: https://de.wikipedia.org/wiki/Gr%C3%BCnlandtemperatursumme
+                params: result
         - wachstumsgradtage: Wachstumsgradtage https://de.wikipedia.org/wiki/Wachstumsgradtag
-                params: threshold, variant, result 
+                params: year, threshold, variant, result
         - temperaturserie: Temperaturserie provide list of lists having timestamp and temperature(s) per day
                 params: data_con_func
         - wuestentage: Wüstentage, Anzahl der Tage  mit Tmax ≥ 35 °C
@@ -1784,111 +1799,208 @@ class DatabaseAddOn(SmartPlugin):
         if not params:
             params = dict()
 
-        def kaeltesumme() -> float:
+        def kaeltesumme() -> Union[list, float, None]:
             """Berechnung der Kältesumme durch Akkumulieren aller negativen Tagesdurchschnittstemperaturen im Abfragezeitraum
 
-            :return: value of waermesumme
+                result 'total': Rückgabe als Gesamtwert
+                result 'month': Rückgabe als Liste mit kumulierten Werten pro Monat [['timestamp1', 'kumulierter Wert am Ende von Monat1'], ['timestamp2', ''kumulierter Wert am Ende von Monat2', [...], ...]
+                result 'day': Rückgabe als Liste mit kumulierten Werten pro Tag [['timestamp1', 'kumulierter Wert am Ende von Tag1'], ['timestamp2', ''kumulierter Wert am Ende von Tag2', [...], ...]
             """
-            
-            ks = 0
-            for entry in raw_data:
-                if entry[1] < 0:
-                    ks -= entry[1]
-            return int(round(ks, 0))
 
-        def waermesumme() -> float:
-            """Berechnung der Wärmesumme durch Akkumulieren aller Tagesdurchschnittstemperaturen im Abfragezeitraum, die größer/gleich dem Schwellenwert sind
+            # define defaults
+            ks_total = 0
+            ks_serie_day = []
+            ks_serie_month = {}
 
-            :return: value of waermesumme
-            """
-        
-            # get threshold and set to min 0
-            threshold = params.get('threshold', 10)
-            threshold = max(0, threshold)
+            # get result type
+            result = params.get('result', 'total')
 
-            # akkumulieren alle Werte, größer/gleich Schwellenwert
-            ws = 0
-            for entry in raw_data:
-                if entry[1] >= threshold:
-                    ws += entry[1]
-            return int(round(ws, 0))
-
-        def gruenlandtempsumme() -> float:
-            """Berechnung der Grünlandtemperatursumme durch Akkumulieren alle positiven Tagesmitteltemperaturen, im Januar gewichtet mit 50%, im Februar mit 75%
-
-            :return: value of gruenlandtempsumme
-            """
-            
-            gts = 0
+            # akkumulieren alle Werte, kleiner 0
             for entry in raw_data:
                 timestamp, value = entry
-                if value > 0:
-                    dt = self._timestamp_to_datetime(timestamp / 1000)
-                    if dt.month == 1:
-                        value = value * 0.5
-                    elif dt.month == 2:
-                        value = value * 0.75
-                    gts += value
-            return int(round(gts, 0))
 
-        def wachstumsgradtage() -> Union[list, float, None]:
-            """Berechnet die Wachstumsgradtage noch 3 möglichen Methoden und gibt entweder den Gesamtwert oder eine Liste mit kumulierten Werten pro Tag zurück
-                
-                variant 1: Berechnung des einfachen Durchschnitts
-                variant 2: modifizierte Berechnung des einfachen Durchschnitts.
-                variant 3: Zähle Tage, bei denen die Tagesmitteltemperatur oberhalb des Schwellenwertes lag
-                
-                result 'value': Rückgabe als Gesamtwert
-                result 'series: Rückgabe als Liste mit kumulierten Werten pro Tag zurück [['timestamp1', 'kumulierter Wert am Ende von Tag1'], ['timestamp2', ''kumulierter Wert am Ende von Tag2', [...], ...]
+                # limit values to negtive values
+                ks_day = min(0, value)
+
+                # create total value of kaeltesumme
+                ks_total -= ks_day
+
+                # create series kaeltesumme per day
+                ks_serie_day.append([timestamp, round(ks_day, 1)])
+
+                # create series kaeltesumme per month
+                _dt = datetime.datetime.fromtimestamp(timestamp)
+                _dt = _dt.replace(day=1, minute=0, hour=0)
+                _timestamp = self._datetime_to_timestamp(_dt)
+                ks_serie_month[_timestamp] = ks_serie_month.get(_timestamp, 0) + ks_day
+
+            # return result
+            if result == 'day':
+                return ks_serie_day
+            elif result == 'month':
+                return [[k, round(v, 1)] for k, v in ks_serie_month.items()]
+            return int(round(ks_total, 0))
+
+        def waermesumme() -> Union[list, float, None]:
+            """Berechnung der Wärmesumme durch Akkumulieren aller Tagesdurchschnittstemperaturen im Abfragezeitraum, die größer/gleich dem Schwellenwert sind
+
+                threshold: Schwellwert
+                result 'total': Rückgabe als Gesamtwert
+                result 'month': Rückgabe als Liste mit kumulierten Werten pro Monat [['timestamp1', 'kumulierter Wert am Ende von Monat1'], ['timestamp2', ''kumulierter Wert am Ende von Monat2', [...], ...]
+                result 'day': Rückgabe als Liste mit kumulierten Werten pro Tag [['timestamp1', 'kumulierter Wert am Ende von Tag1'], ['timestamp2', ''kumulierter Wert am Ende von Tag2', [...], ...]
             """
         
-            # define defaults
-            wgte = 0
-            wgte_list = []
-            
             # get threshold and set to min 0
-            threshold = params.get('threshold', 10)
-            threshold = max(0, threshold)
+            threshold = max(params.get('threshold', 10), 0)
+
+            # get result type
+            result = params.get('result', 'total')
+
+            # define defaults
+            ws_total = 0
+            ws_serie_day = []
+            ws_serie_month = {}
+
+            # akkumulieren alle Werte, größer/gleich Schwellenwert
+            for entry in raw_data:
+                timestamp, value = entry
+
+                # limit values per threshold
+                ws_day = value if value >= threshold else 0
+
+                # create total value of waermesumme
+                ws_total += ws_day
+
+                # create series kaeltesumme per day
+                ws_serie_day.append([timestamp, round(ws_day, 1)])
+
+                # create series kaeltesumme per month
+                _dt = datetime.datetime.fromtimestamp(timestamp)
+                _dt = _dt.replace(day=1, minute=0, hour=0)
+                _timestamp = self._datetime_to_timestamp(_dt)
+                ws_serie_month[_timestamp] = ws_serie_month.get(_timestamp, 0) + ws_day
+
+            # return result
+            if result == 'day':
+                return ws_serie_day
+            elif result == 'month':
+                return [[k, round(v, 1)] for k, v in ws_serie_month.items()]
+            return int(round(ws_total, 0))
+
+        def gruenlandtempsumme() -> Union[list, float, None]:
+            """Berechnung der Grünlandtemperatursumme durch Akkumulieren alle positiven Tagesmitteltemperaturen, im Januar gewichtet mit 50%, im Februar mit 75%
+
+                result 'total': Rückgabe als Gesamtwert
+                result 'month': Rückgabe als Liste mit kumulierten Werten pro Monat [['timestamp1', 'kumulierter Wert am Ende von Monat1'], ['timestamp2', ''kumulierter Wert am Ende von Monat2', [...], ...]
+                result 'day': Rückgabe als Liste mit kumulierten Werten pro Tag [['timestamp1', 'kumulierter Wert am Ende von Tag1'], ['timestamp2', ''kumulierter Wert am Ende von Tag2', [...], ...]
+            """
+            # define defaults
+            gts_total = 0
+            gts_serie_day = []
+            gts_serie_month = {}
+
+            # get result type
+            result = params.get('result', 'total')
+
+            # accumulate value
+            for entry in raw_data:
+                timestamp, value = entry
+
+                # limit values to positive values
+                gts_day = max(0, value)
+
+                # degrade values for january and february
+                dt = self._timestamp_to_datetime(timestamp / 1000)
+                if dt.month == 1:
+                    gts_day = gts_day * 0.5
+                elif dt.month == 2:
+                    gts_day = gts_day * 0.75
+
+                # create total value of gruenlandtempsumme
+                gts_total += gts_day
+
+                # create series gruenlandtempsumme per day
+                gts_serie_day.append([timestamp, round(gts_day, 1)])
+
+                # create series gruenlandtempsumme per month
+                _dt = datetime.datetime.fromtimestamp(timestamp)
+                _dt = _dt.replace(day=1, minute=0, hour=0)
+                _timestamp = self._datetime_to_timestamp(_dt)
+                gts_serie_month[_timestamp] = gts_serie_month.get(_timestamp, 0) + gts_day
+
+            # return result
+            if result == 'day':
+                return gts_serie_day
+            elif result == 'month':
+                return [[k, round(v, 1)] for k, v in gts_serie_month.items()]
+            return int(round(gts_total, 0))
+
+        def wachstumsgradtage() -> Union[list, float, None]:
+            """Berechnet die Wachstumsgradtage noch 2 möglichen Varianten und gibt entweder den Gesamtwert oder eine Liste mit kumulierten Werten pro Tag zurück
+                
+                threshold: Schwellwert
+                variant 0: Berechnungsmethode "Berechnung des einfachen Durchschnitts" mit Vergleich des Durchschnitts der täglichen Minimal- und Maximaltemperatur mit Schwellenwert.
+                           Maximaltemperaturen werden bei 30 °C gekappt.
+                variant 1: Berechnungsmethode "modifizierte Berechnung des einfachen Durchschnitts" mit Vergleich des Durchschnitts der täglichen Minimal- und Maximaltemperatur mit Schwellenwert.
+                           Vor der Berechnung des Durchschnittes wird jede Temperatur, die den Schwellenwert unterschreitet, auf den Schwellenwert geändert.
+                           Maximaltemperaturen werden bei 30 °C gekappt.
+                result 'total': Rückgabe als Gesamtwert
+                result 'month': Rückgabe als Liste mit kumulierten Werten pro Monat [['timestamp1', 'kumulierter Wert am Ende von Monat1'], ['timestamp2', ''kumulierter Wert am Ende von Monat2', [...], ...]
+                result 'day': Rückgabe als Liste mit kumulierten Werten pro Tag [['timestamp1', 'kumulierter Wert am Ende von Tag1'], ['timestamp2', ''kumulierter Wert am Ende von Tag2', [...], ...]
+            """
+
+            # define defaults
+            wgt_total = 0
+            wgt_serie_day = []
+            wgt_serie_month = {}
+            upper_limit = 30
+
+            # get threshold and set to min 0
+            threshold = max(params.get('threshold', 10), 0)
 
             # get variant
             variant = params.get('variant', 0)
             
             # get result type
-            result = params.get('result', 'value')
-                
-            # Berechnung des einfachen Durchschnitts
+            result = params.get('result', 'total')
+
+            # variant handling
             if variant == 0:
-                self.logger.info(f"Calculate 'Wachstumsgradtag' according to 'Berechnung des einfachen Durchschnitts'.")
-            # Die modifizierte Berechnung des einfachen Durchschnitts. // akkumuliere positive Differenz aus Mittelwert aus Tagesminimaltemperatur mit mind Schwellentemperatur und Tagesmaximaltemperatur limitiert auf 30°C und Schwellenwert
+                self.logger.info(f"Calculate 'Wachstumsgradtage' according to 'Berechnung des einfachen Durchschnitts' to {result=}.")
+                min_val_c = 'min_val'
             elif variant == 1:
-                self.logger.info(f"Calculate 'Wachstumsgradtag' according to 'Modifizierte Berechnung des einfachen Durchschnitts'.")
-            # Zähle Tage, bei denen die Tagesmitteltemperatur oberhalb des Schwellenwertes lag
-            elif variant == 2:
-                self.logger.info(f"Calculate 'Wachstumsgradtag' according to 'Anzahl der Tage, bei denen die Tagesmitteltemperatur oberhalb des Schwellenwertes lag'.")
+                self.logger.info(f"Calculate 'Wachstumsgradtage' according to 'Modifizierte Berechnung des einfachen Durchschnitts' to {result=}.")
+                min_val_c = 'max(threshold, min_val)'
             else:
-                self.logger.warning(f"Requested variant of 'Wachstumsgradtag' not defined. Aborting...")
+                self.logger.warning(f"Requested variant of 'Wachstumsgradtage' not defined. Aborting...")
                 return
 
+            # accumulate value
             for entry in raw_data:
                 timestamp, min_val, max_val = entry
-                
-                if variant == 0:
-                    wgt = (((min_val + min(30, max_val)) / 2) - threshold)
-                elif variant == 1:
-                    wgt = (((max(threshold, min_val) + min(30.0, max_val)) / 2) - threshold)
-                elif variant == 2:
-                    wgt = (((min_val + min(30, max_val)) / 2) - threshold)
-                else:
-                    wgt = None
 
-                if wgt and wgt > 0:
-                    wgte += wgt
-                wgte_list.append([timestamp, int(round(wgte, 0))])
+                # calc wachstumsgradtage per day
+                wgt_day = ((eval(min_val_c) + min(upper_limit, max_val)) / 2) - threshold
+                wgt_day = max(0, wgt_day)
 
-                if result == 'series':
-                    return wgte_list
-                else:
-                    return int(round(wgte, 0))
+                # create total value of wachstumsgradtage
+                wgt_total += wgt_day
+
+                # create series wachstumsgradtage per day
+                wgt_serie_day.append([timestamp, round(wgt_day, 1)])
+
+                # create series wachstumsgradtage per month
+                _dt = datetime.datetime.fromtimestamp(timestamp)
+                _dt = _dt.replace(day=1, minute=0, hour=0)
+                _timestamp = self._datetime_to_timestamp(_dt)
+                wgt_serie_month[_timestamp] = wgt_serie_month.get(_timestamp, 0) + wgt_day
+
+            # return result
+            if result == 'day':
+                return wgt_serie_day
+            elif result == 'month':
+                return [[k, round(v, 1)] for k, v in wgt_serie_month.items()]
+            return int(round(wgt_total, 0))
 
         def temperaturserie() -> list:
             """provide list of lists having timestamp and temperature(s) per day"""
@@ -1928,12 +2040,8 @@ class DatabaseAddOn(SmartPlugin):
             return _count(operator.ge, 'avg', 5)
 
         def _count(op, minmax: str, limit: int) -> int:
-            count = 0
-            for entry in raw_data:
-                value = entry[2] if minmax == 'max' else entry[1]
-                if op(value, limit):
-                    count += 1
-            return count
+            minmax_index = 2 if minmax == 'max' else 1
+            return sum(1 for entry in raw_data if op(entry[minmax_index], limit))
 
         self.logger.debug(f"{func=}, {database_item=}, {year=}, {month=}, {params=}")
 
@@ -1949,24 +2057,26 @@ class DatabaseAddOn(SmartPlugin):
         if not year or year == 'current':
             year = today.year
         elif not self._valid_year(year):
-            self.logger.error(f"Year for item={database_item.path()} was {year}. This is not a valid year. Aborting...")
+            self.logger.error(f"Year for item={database_item.property.path} was {year}. This is not a valid year. Aborting...")
             return
+        if func == 'kaeltesumme' and 1 <= today.month <= 9:
+            year -= 1
 
         # define start_date, end_date
         if month is None:
-            ((s_y, s_m, s_d), (e_y, e_m, e_d)) = defaults.get(func, {}).get('start_end', timeframe[3])
-            start_date = datetime.date(int(year) + s_y, s_m, s_d)
-            end_date = datetime.date(int(year) + e_y, e_m, e_d)
+            ((start_year, start_month, start_day), (end_year, end_month, end_day)) = defaults.get(func, {}).get('start_end', timeframe[3])
+            start_date = datetime.date(int(year) + start_year, start_month, start_day)
+            end_date = datetime.date(int(year) + end_year, end_month, end_day)
         elif self._valid_month(month):
             start_date = datetime.date(int(year), int(month), 1)
             end_date = start_date + relativedelta(months=+1) - datetime.timedelta(days=1)
         else:
-            self.logger.error(f"Month for item={database_item.path()} was {month}. This is not a valid month. Aborting...")
+            self.logger.error(f"Month for item={database_item.property.path} was {month}. This is not a valid month. Aborting...")
             return
 
         # check start_date
         if start_date > today:
-            self.logger.info(f"Start time for query of item={database_item.path()} is in future. Aborting...")
+            self.logger.info(f"Start time for query of item={database_item.property.path} is in future. Aborting...")
             return
 
         # define start / end
@@ -1975,7 +2085,7 @@ class DatabaseAddOn(SmartPlugin):
 
         # check end
         if start < end:
-            self.logger.error(f"End time for query of item={database_item.path()} is before start time. Aborting...")
+            self.logger.error(f"End time for query of item={database_item.property.path} is before start time. Aborting...")
             return
             
         # get raw data as list
@@ -2019,24 +2129,25 @@ class DatabaseAddOn(SmartPlugin):
 
         def _group_value_by_datetime_block(block: str) -> dict:
             """
-            create dict of datetimes (per day or hour) and values based on database query result in format {'datetime1': [values]}, 'datetime1': [values], ..., 'datetimex': [values]}
+            create dict of datetimes (per day or hour) and values based on database query result in format {{'datetime1': [values]}, 'datetime1': [values], ..., 'datetimex': [values]}
             :param block:   defined the increment of datetime, default is min, further possible is 'day' and 'hour'
             """
 
             _value_dict = {}
-            for _entry in raw_data:
-                ts = _entry[0]
+
+            for ts, value in raw_data:
+                # format timestamp
                 if len(str(ts)) > 10:
                     ts = ts / 1000
-                dt = self._timestamp_to_datetime(ts)
-                dt = dt.replace(second=0, microsecond=0, tzinfo=None)
+                # format datetime object
+                dt = self._timestamp_to_datetime(ts).replace(second=0, microsecond=0, tzinfo=None)
                 if block == 'hour':
                     dt = dt.replace(minute=0)
                 if block == 'day':
                     dt = dt.replace(minute=0, hour=0)
-                if dt not in _value_dict:
-                    _value_dict[dt] = []
-                _value_dict[dt].append(_entry[1])
+                # fill dict
+                _value_dict.setdefault(dt, []).append(value)
+
             return dict(sorted(_value_dict.items()))
 
         def _concentrate_values(option: str) -> list:
@@ -2069,7 +2180,7 @@ class DatabaseAddOn(SmartPlugin):
             return _value_list
 
         if self.debug_log.prepare:
-            self.logger.debug(f'called with database_item={database_item.path()}, {timeframe=}, {start=}, {end=}, {ignore_value_list=}, {data_con_func=}')
+            self.logger.debug(f'called with database_item={database_item.property.path}, {timeframe=}, {start=}, {end=}, {ignore_value_list=}, {data_con_func=}')
 
         if data_con_func not in ('min', 'max', 'avg', 'minmax', 'first', 'avg_day', 'avg_hour', 'minmax_day', 'minmax_hour', 'first_day', 'first_hour', 'first_hour_avg_day', 'avg_hour_avg_day', 'min_hour', 'min_day', 'max_hour', 'max_day'):
             self.logger.warning(f"defined {data_con_func=} for _prepare_value_list unknown. Need to be 'avg', 'minmax', 'first', 'avg_day', 'avg_hour', 'minmax_day', 'minmax_hour', 'first_day','first_hour', 'first_hour_avg_day' or 'avg_hour_avg_day'. Aborting...")
@@ -2096,7 +2207,7 @@ class DatabaseAddOn(SmartPlugin):
             raw_data = self._query_item(**_query_params)
 
             if raw_data == [[None, None]] or raw_data == [[0, 0]]:
-                self.logger.info(f"no valid data from database query for item={database_item.path()} received during _prepare_value_list. Aborting...")
+                self.logger.info(f"no valid data from database query for item={database_item.property.path} received during _prepare_value_list. Aborting...")
                 return
 
             if cache:
@@ -2150,10 +2261,10 @@ class DatabaseAddOn(SmartPlugin):
             if not _db_plugin:
                 self.logger.error(f"Database plugin not loaded or given ConfigName {self.db_configname} not correct. No need for DatabaseAddOn Plugin.")
                 return False
-            else:
-                self.logger.debug(f"Corresponding plugin 'database' with given config name '{self.db_configname}' found.")
-                self._db_plugin = _db_plugin
-                return self._get_db_parameter()
+
+            self.logger.debug(f"Corresponding plugin 'database' with given config name '{self.db_configname}' found.")
+            self._db_plugin = _db_plugin
+            return self._get_db_parameter()
 
     def _get_db_parameter(self) -> bool:
         """
@@ -2181,11 +2292,10 @@ class DatabaseAddOn(SmartPlugin):
                 self.item_attribute_search_str = f"{self.item_attribute_search_str}@{self.db_instance}"
             self.connection_data = self._db_plugin.get_parameter_value('connect')  # pymsql ['host:localhost', 'user:smarthome', 'passwd:smarthome', 'db:smarthome', 'port:3306']
             self.logger.debug(f"Database Plugin available with instance={self.db_instance} and connection={self.connection_data}")
+            return True
         except Exception as e:
             self.logger.error(f"Error {e} occurred during getting database plugin parameters. DatabaseAddOn Plugin not loaded.")
             return False
-        else:
-            return True
 
     def _check_db_connection_setting(self) -> None:
         """
@@ -2225,7 +2335,7 @@ class DatabaseAddOn(SmartPlugin):
                 self.item_cache[item]['oldest_log'] = oldest_log
 
         if self.debug_log.prepare:
-            self.logger.debug(f"_get_oldest_log for item={item.path()} = {oldest_log}")
+            self.logger.debug(f"_get_oldest_log for item={item.property.path} = {oldest_log}")
 
         return oldest_log
 
@@ -2234,7 +2344,7 @@ class DatabaseAddOn(SmartPlugin):
         Get value of the oldest log of item from cache dict or get value from db and put it to cache dict
 
         :param item: Item, for which query should be done
-        :return: oldest value
+        :return: the oldest value
         """
 
         _oldest_entry = self.item_cache.get(item, {}).get('oldest_entry', None)
@@ -2250,7 +2360,7 @@ class DatabaseAddOn(SmartPlugin):
                 oldest_log = self._get_oldest_log(item)
                 if oldest_log is None:
                     validity = True
-                    self.logger.error(f"oldest_log for item={item.path()} could not be read; value is set to -999999999")
+                    self.logger.error(f"oldest_log for item={item.property.path} could not be read; value is set to -999999999")
                 oldest_entry = self._read_log_timestamp(item_id, oldest_log)
                 i += 1
                 if isinstance(oldest_entry, list) and isinstance(oldest_entry[0], tuple) and len(oldest_entry[0]) >= 4:
@@ -2261,10 +2371,10 @@ class DatabaseAddOn(SmartPlugin):
                     validity = True
                 elif i == 10:
                     validity = True
-                    self.logger.error(f"oldest_value for item={item.path()} could not be read; value is set to -999999999")
+                    self.logger.error(f"oldest_value for item={item.property.path} could not be read; value is set to -999999999")
 
         if self.debug_log.prepare:
-            self.logger.debug(f"_get_oldest_value for item={item.path()} = {_oldest_value}")
+            self.logger.debug(f"_get_oldest_value for item={item.property.path} = {_oldest_value}")
 
         return _oldest_value
 
@@ -2279,7 +2389,7 @@ class DatabaseAddOn(SmartPlugin):
         _item_id = self.item_cache.get(item, {}).get('id', None)
 
         if _item_id is None:
-            row = self._read_item_table(item_path=str(item.path()))
+            row = self._read_item_table(item_path=str(item.property.path))
             if row and len(row) > 0:
                 _item_id = int(row[0])
                 if item not in self.item_cache:
@@ -2324,7 +2434,7 @@ class DatabaseAddOn(SmartPlugin):
         """
 
         if self.debug_log.prepare:
-            self.logger.debug(f"  called with {func=}, item={database_item.path()}, {timeframe=}, {start=}, {end=}, {group=}, {group2=}, {ignore_value_list=}, {use_oldest_entry=}")
+            self.logger.debug(f"  called with {func=}, item={database_item.property.path}, {timeframe=}, {start=}, {end=}, {group=}, {group2=}, {ignore_value_list=}, {use_oldest_entry=}")
 
         # set default result
         error_result = [[None, None]]
@@ -2332,7 +2442,7 @@ class DatabaseAddOn(SmartPlugin):
 
         # check correctness of timeframe
         if timeframe not in ALLOWED_QUERY_TIMEFRAMES:
-            self.logger.error(f"Requested {timeframe=} for item={database_item.path()} not defined; Need to be 'year' or 'month' or 'week' or 'day' or 'hour''. Query cancelled.")
+            self.logger.error(f"Requested {timeframe=} for item={database_item.property.path} not defined; Need to be 'year' or 'month' or 'week' or 'day' or 'hour''. Query cancelled.")
             return error_result
 
         # define start and end of query as timestamp in microseconds
@@ -2347,13 +2457,13 @@ class DatabaseAddOn(SmartPlugin):
         if ts_end is None or ts_start > ts_end:
             if self.debug_log.prepare:
                 self.logger.debug(f"{ts_start=}, {ts_end=}")
-            self.logger.warning(f"Requested {start=} for item={database_item.path()} is not valid since {start=} > {end=} or end not given. Query cancelled.")
+            self.logger.warning(f"Requested {start=} for item={database_item.property.path} is not valid since {start=} > {end=} or end not given. Query cancelled.")
             return error_result
 
         # define item_id
         item_id = self._get_itemid(database_item)
         if not item_id:
-            self.logger.error(f"DB ItemId for item={database_item.path()} not found. Query cancelled.")
+            self.logger.error(f"DB ItemId for item={database_item.property.path} not found. Query cancelled.")
             return error_result
 
         if self.debug_log.prepare:
@@ -2361,15 +2471,15 @@ class DatabaseAddOn(SmartPlugin):
 
         # check if values for end time and start time are in database
         if ts_end < oldest_log:  # (Abfrage abbrechen, wenn Endzeitpunkt in UNIX-timestamp der Abfrage kleiner (und damit jünger) ist, als der UNIX-timestamp des ältesten Eintrages)
-            self.logger.info(f"  Requested end time timestamp={ts_end}/{self._timestamp_to_timestring(ts_end)} of query for item={database_item.path()} is prior to oldest entry with timestamp={oldest_log}/{self._timestamp_to_timestring(oldest_log)}. Query cancelled.")
+            self.logger.info(f"  Requested end time timestamp={ts_end}/{self._timestamp_to_timestring(ts_end)} of query for item={database_item.property.path} is prior to oldest entry with timestamp={oldest_log}/{self._timestamp_to_timestring(oldest_log)}. Query cancelled.")
             return error_result
 
         if ts_start < oldest_log:
             if self.use_oldest_entry or use_oldest_entry:
-                self.logger.info(f"  Requested start time timestamp={ts_start}/{self._timestamp_to_timestring(ts_start)} of query for item={database_item.path()} is prior to oldest entry with timestamp={oldest_log}/{self._timestamp_to_timestring(oldest_log)}. Oldest available entry will be used.")
+                self.logger.info(f"  Requested start time timestamp={ts_start}/{self._timestamp_to_timestring(ts_start)} of query for item={database_item.property.path} is prior to oldest entry with timestamp={oldest_log}/{self._timestamp_to_timestring(oldest_log)}. Oldest available entry will be used.")
                 ts_start = oldest_log
             else:
-                self.logger.info(f"  Requested start time timestamp={ts_start}/{self._timestamp_to_timestring(ts_start)} of query for item={database_item.path()} is prior to oldest entry with timestamp={oldest_log}/{self._timestamp_to_timestring(oldest_log)}. Query cancelled.")
+                self.logger.info(f"  Requested start time timestamp={ts_start}/{self._timestamp_to_timestring(ts_start)} of query for item={database_item.property.path} is prior to oldest entry with timestamp={oldest_log}/{self._timestamp_to_timestring(oldest_log)}. Query cancelled.")
                 return error_result
 
         # prepare and do query
@@ -2381,11 +2491,11 @@ class DatabaseAddOn(SmartPlugin):
 
         # post process query_result
         if query_result is None:
-            self.logger.error(f"Error occurred during '_query_log_timestamp' of item={database_item.path()}. Aborting...")
+            self.logger.error(f"Error occurred during '_query_log_timestamp' of item={database_item.property.path}. Aborting...")
             return error_result
 
         if len(query_result) == 0:
-            self.logger.info(f"  No values for item={database_item.path()} in requested timeframe between {ts_start}/{self._timestamp_to_timestring(ts_start)} and {ts_end}/{self._timestamp_to_timestring(ts_end)} in database found.")
+            self.logger.info(f"  No values for item={database_item.property.path} in requested timeframe between {ts_start}/{self._timestamp_to_timestring(ts_start)} and {ts_end}/{self._timestamp_to_timestring(ts_end)} in database found.")
             return nodata_result
 
         result = []
@@ -2397,10 +2507,10 @@ class DatabaseAddOn(SmartPlugin):
                 result.append([timestamp, value])
 
         if self.debug_log.prepare:
-            self.logger.debug(f"  value for item={database_item.path()} with {query_params=}: {result}")
+            self.logger.debug(f"  value for item={database_item.property.path} with {query_params=}: {result}")
 
         if not result:
-            self.logger.info(f"  No values for item={database_item.path()} in requested timeframe between {ts_start}/{self._timestamp_to_timestring(ts_start)} and {ts_end}/{self._timestamp_to_timestring(ts_end)} in database found.")
+            self.logger.info(f"  No values for item={database_item.property.path} in requested timeframe between {ts_start}/{self._timestamp_to_timestring(ts_start)} and {ts_end}/{self._timestamp_to_timestring(ts_end)} in database found.")
             return nodata_result
 
         return result
@@ -2464,33 +2574,6 @@ class DatabaseAddOn(SmartPlugin):
 
         self.logger.info(f"Working queue will be cleared. Calculation run will end.")
         self.item_queue.queue.clear()
-
-    # ToDo: Check if still needed
-    def _queue_consumer_thread_startup(self):
-        """Start a thread to work item queue"""
-
-        self.logger = logging.getLogger(__name__)
-        _name = 'plugins.' + self.get_fullname() + '.work_item_queue'
-
-        try:
-            self.queue_consumer_thread = threading.Thread(target=self.work_item_queue, name=_name, daemon=False)
-            self.queue_consumer_thread.start()
-            self.logger.debug("Thread for 'queue_consumer_thread' has been started")
-        except threading.ThreadError:
-            self.logger.error("Unable to launch thread for 'queue_consumer_thread'.")
-            self.queue_consumer_thread = None
-
-    # ToDo: Check if still needed
-    def _queue_consumer_thread_shutdown(self):
-        """Shut down the thread to work item queue"""
-
-        if self.queue_consumer_thread:
-            self.queue_consumer_thread.join()
-            if self.queue_consumer_thread.is_alive():
-                self.logger.error("Unable to shut down 'queue_consumer_thread' thread")
-            else:
-                self.logger.info("Thread 'queue_consumer_thread' has been shut down.")
-                self.queue_consumer_thread = None
 
     def _get_start_end_as_timestamp(self, timeframe: str, start: Union[int, str, None], end: Union[int, str, None]) -> tuple:
         """
@@ -2557,8 +2640,7 @@ class DatabaseAddOn(SmartPlugin):
         if ((isinstance(year, int) or (isinstance(year, str) and year.isdigit())) and (
                 1980 <= int(year) <= self.shtime.today(offset=0).year)) or (isinstance(year, str) and year == 'current'):
             return True
-        else:
-            return False
+        return False
 
     @staticmethod
     def _valid_month(month: Union[int, str]) -> bool:
@@ -2566,8 +2648,7 @@ class DatabaseAddOn(SmartPlugin):
 
         if (isinstance(month, int) or (isinstance(month, str) and month.isdigit())) and (1 <= int(month) <= 12):
             return True
-        else:
-            return False
+        return False
 
     #################################
     #   Database Query Preparation
@@ -2641,7 +2722,7 @@ class DatabaseAddOn(SmartPlugin):
             'last':        'LIMIT 1 ',
         }
 
-        _where = "item_id = :item_id AND time < :ts_start " if func == "next" else "item_id = :item_id AND time BETWEEN :ts_start AND :ts_end "
+        _where = "item_id = :item_id AND time <= :ts_end " if func == "next" else "item_id = :item_id AND time BETWEEN :ts_start AND :ts_end "
 
         _db_table = 'log '
 
@@ -2691,9 +2772,9 @@ class DatabaseAddOn(SmartPlugin):
                 _where = f'{_where}AND val_num {entry.strip()} '
 
         # set params
-        params = {'item_id': item_id, 'ts_start': ts_start}
-        if func != "next":
-            params.update({'ts_end': ts_end})
+        params = {'item_id': item_id, 'ts_start': ts_start, 'ts_end': ts_end}
+        if func == "next":
+            params.pop('ts_start', None)
 
         # assemble query
         query = f"SELECT {_select[func]}FROM {_db_table}WHERE {_where}{_group_by.get(group, '')}{_order.get(func, '')}{_limit.get(func, '')}{_table_alias.get(func, '')}{_group_by.get(group2, '')}".strip()
@@ -2958,30 +3039,28 @@ class DebugLogOptions:
 #   Helper functions
 #######################
 
-
-def params_to_dict(string: str) -> Union[dict, None]:
+def params_to_dict(string: str) -> Union[Dict[str, Union[str, int]], None]:
     """Parse a string with named arguments and comma separation to dict; (e.g. string = 'year=2022, month=12')"""
 
+    res_dict = {}
     try:
-        res_dict = dict((a.strip(), b.strip()) for a, b in (element.split('=') for element in string.split(', ')))
-    except Exception:
+        for element in string.split(','):
+            key, value = element.split('=')
+            key, value = key.strip(), value.strip().strip('\'"')
+            if value.isdigit():
+                value = int(value)
+            res_dict[key] = value
+    except AttributeError:
         return None
-    else:
-        # convert to int and remove possible double quotes
-        for key in res_dict:
-            if isinstance(res_dict[key], str):
-                res_dict[key] = res_dict[key].replace('"', '')
-                res_dict[key] = res_dict[key].replace("'", "")
-            if res_dict[key].isdigit():
-                res_dict[key] = int(float(res_dict[key]))
+    except ValueError:
+        return None
 
-        # check correctness if known key values (func=str, item, timeframe=str, start=int, end=int, count=int, group=str, group2=str, year=int, month=int):
-        for key in res_dict:
-            if key in ('func', 'timeframe', 'group', 'group2') and not isinstance(res_dict[key], str):
-                return None
-            elif key in ('start', 'end', 'count') and not isinstance(res_dict[key], int):
-                return None
-        return res_dict
+    known_keys = {'func': str, 'item': str, 'timeframe': str, 'start': int, 'end': int, 'count': int, 'group': str, 'group2': str, 'year': int, 'month': int}
+    for key, value in res_dict.items():
+        if key in known_keys and not isinstance(value, known_keys[key]):
+            return None
+
+    return res_dict
 
 
 def translate_timeframe(timeframe: str) -> str:
@@ -3016,7 +3095,7 @@ def timeframe_to_timeframe(timeframe_in: str, timeframe_out: str) -> int:
     _w_in_m = _w_in_y / _m_in_y
     _d_in_m = _d_in_y / _m_in_y
 
-    lookup = {
+    conversion_factors = {
         'hour': {'hour': 1,
                  'day': _h_in_d,
                  'week': _h_in_d * _d_in_w,
@@ -3049,7 +3128,7 @@ def timeframe_to_timeframe(timeframe_in: str, timeframe_out: str) -> int:
                  }
     }
 
-    return lookup[timeframe_in][timeframe_out]
+    return conversion_factors[timeframe_in][timeframe_out]
 
 
 def to_int(arg) -> Union[int, None]:
@@ -3089,3 +3168,5 @@ def split_sting_letters_numbers(string) -> list:
 
 ALLOWED_QUERY_TIMEFRAMES = ['year', 'month', 'week', 'day', 'hour']
 ALLOWED_MINMAX_FUNCS = ['min', 'max', 'avg']
+ALLOWED_QUERY_FUNCS = ['avg', 'avg1', 'min', 'max', 'max1', 'sum', 'on', 'integrate', 'sum_max', 'sum_avg', 'sum_min_neg', 'diff_max', 'next', 'raw', 'first', 'last']
+ALLOWED_RESULT_TYPES = ['total', 'month', 'day']

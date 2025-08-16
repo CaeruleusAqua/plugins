@@ -21,10 +21,12 @@
 #  along with SmartHomeNG  If not, see <http://www.gnu.org/licenses/>.
 #########################################################################
 
+from __future__ import annotations
 import builtins
 import os
 import sys
 import time
+from typing import Any
 
 if __name__ == '__main__':
 
@@ -37,10 +39,11 @@ if __name__ == '__main__':
     BASE = os.path.sep.join(os.path.realpath(__file__).split(os.path.sep)[:-3])
     sys.path.insert(0, BASE)
 
-from lib.model.sdp.globals import (PLUGIN_ATTR_NET_HOST, PLUGIN_ATTR_CONNECTION,
+from lib.model.sdp.globals import (PLUGIN_ATTR_NET_HOST, PLUGIN_ATTR_CONNECTION, PLUGIN_ATTR_CMD_CLASS,
                                    PLUGIN_ATTR_SERIAL_PORT, PLUGIN_ATTR_CONN_TERMINATOR,
                                    PLUGIN_ATTR_MODEL, CONN_NET_TCP_CLI, CONN_SER_ASYNC, CONN_NULL)
 from lib.model.smartdeviceplugin import SmartDevicePlugin, Standalone
+from lib.model.sdp.command import SDPCommandParseStr
 
 # from .webif import WebInterface
 
@@ -50,7 +53,7 @@ builtins.SDP_standalone = False
 class pioneer(SmartDevicePlugin):
     """ Device class for Pioneer AV function. """
 
-    PLUGIN_VERSION = '1.0.2'
+    PLUGIN_VERSION = '1.0.3'
 
     def _set_device_defaults(self):
         # set our own preferences concerning connections
@@ -62,6 +65,8 @@ class pioneer(SmartDevicePlugin):
             self.logger.error('Neither host nor serialport set, connection not possible. Using dummy connection, plugin will not work')
             self._parameters[PLUGIN_ATTR_CONNECTION] = CONN_NULL
 
+        self._parameters[PLUGIN_ATTR_CMD_CLASS] = SDPCommandParseStr
+
         b = self._parameters[PLUGIN_ATTR_CONN_TERMINATOR].encode()
         b = b.decode('unicode-escape').encode()
         self._parameters[PLUGIN_ATTR_CONN_TERMINATOR] = b
@@ -72,24 +77,27 @@ class pioneer(SmartDevicePlugin):
             data['payload'] = f'{data.get("payload", "")}{data["limit_response"].decode("unicode-escape")}'
         return data
 
-    def _process_additional_data(self, command, data, value, custom, by):
-        cond1 = command == 'zone1.control.power' or command == 'zone2.control.power' or command == 'zone3.control.power'
-        if cond1 and value:
+    def _process_additional_data(self, command: str, data: Any, value: Any, custom: int, by: str | None = None):
+        def read_group(cmd):
+            if self._parameters[PLUGIN_ATTR_MODEL] == '':
+                self.read_all_commands(f'ALL.{cmd}')
+            else:
+                self.read_all_commands(f'{self._parameters[PLUGIN_ATTR_MODEL]}.{cmd}')
+
+        if command in ['zone1.control.power', 'zone2.control.power', 'zone3.control.power'] and value:
             self.logger.debug(f"Device is turned on by command {command}. Requesting settings.")
             time.sleep(1)
-            if self._parameters[PLUGIN_ATTR_MODEL] == '':
-                self.read_all_commands('ALL.general.settings')
-            else:
-                self.read_all_commands(f'{self._parameters[PLUGIN_ATTR_MODEL]}.general.settings')
-            #self.send_command('general.settings.language')
-            #self.send_command('general.settings.speakersystem')
-            #self.send_command('general.settings.surroundposition')
-            #self.send_command('general.settings.xover')
-            #self.send_command('general.settings.xcurve')
-            #self.send_command('general.settings.hdmi.control')
-            #self.send_command('general.settings.hdmi.controlmode')
-            #self.send_command('general.settings.hdmi.arc')
-            #self.send_command('general.settings.hdmi.standbythrough')
+            read_group('general.settings')
+
+        if command in ['zone1.control.input', 'zone2.control.input', 'zone3.control.input']:
+            if value == 'INTERNET RADIO':
+                self.logger.debug(f"Zone is set to internet radio, checking tuner info.")
+                time.sleep(1)
+                read_group('tuner')
+            if value == 'TUNER':
+                self.logger.debug(f"Zone is set to tuner, checking tuner preset.")
+                time.sleep(1)
+                self.send_command('tuner.tunerpreset')
 
 
 if __name__ == '__main__':

@@ -48,24 +48,24 @@ logging.addLevelName(StateEngineDefaults.VERBOSE, 'DEVELOP')
 
 
 class StateEngine(SmartPlugin):
-    PLUGIN_VERSION = '2.0.0'
+    PLUGIN_VERSION = '2.2.1'
 
     # Constructor
     # noinspection PyUnusedLocal,PyMissingConstructor
     def __init__(self, sh):
         super().__init__()
         StateEngineDefaults.logger = self.logger
-        self.itemsApi = Items.get_instance()
         self._items = self.abitems = {}
+        self.itemsApi = Items.get_instance()
         self.mod_http = None
         self.__sh = sh
         self.alive = False
         self.__cli = None
         self.vis_enabled = self._test_visualization()
         if not self.vis_enabled:
-            self.logger.warning(f'StateEngine is missing the PyDotPlus package, WebIf visualization is disabled')
+            self.logger.warning(f'StateEngine is missing the PyDotPlus package or GraphViz, WebIf visualization is disabled')
         self.init_webinterface(WebInterface)
-        self.get_sh().stateengine_plugin_functions = StateEngineFunctions.SeFunctions(self.get_sh(), self.logger)
+        self.__sh.stateengine_plugin_functions = StateEngineFunctions.SeFunctions(self.__sh, self.logger)
         try:
             log_level = self.get_parameter_value("log_level")
             startup_log_level = self.get_parameter_value("startup_log_level")
@@ -100,15 +100,14 @@ class StateEngine(SmartPlugin):
             StateEngineDefaults.plugin_version = self.PLUGIN_VERSION
             StateEngineDefaults.write_to_log(self.logger)
 
-            StateEngineCurrent.init(self.get_sh())
-            base = self.get_sh().get_basedir()
+            StateEngineCurrent.init(self.__sh)
+            base = self.__sh.get_basedir()
             log_directory = SeLogger.manage_logdirectory(base, log_directory, False)
             SeLogger.log_directory = log_directory
 
             if log_level > 0:
                 text = "StateEngine extended logging is active. Logging to '{0}' with log level {1}."
                 self.logger.info(text.format(log_directory, log_level))
-
 
             if log_maxage > 0:
                 self.logger.info("StateEngine extended log files will be deleted after {0} days.".format(log_maxage))
@@ -124,18 +123,10 @@ class StateEngine(SmartPlugin):
     # noinspection PyMethodMayBeStatic
     def parse_item(self, item):
         item.expand_relativepathes('se_manual_logitem', '', '')
-        try:
-            item.expand_relativepathes('se_item_*', '', '')
-        except Exception:
-            pass
-        try:
-            item.expand_relativepathes('se_status_*', '', '')
-        except Exception:
-            pass
         if self.has_iattr(item.conf, "se_manual_include") or self.has_iattr(item.conf, "se_manual_exclude"):
-            item._eval = "sh.stateengine_plugin_functions.manual_item_update_eval('" + item.id() + "', caller, source)"
+            item._eval = "sh.stateengine_plugin_functions.manual_item_update_eval('" + item.property.path + "', caller, source)"
         elif self.has_iattr(item.conf, "se_manual_invert"):
-            item._eval = "not sh." + item.id() + "()"
+            item._eval = "not sh." + item.property.path + "()"
         return None
 
     # Initialization of plugin
@@ -146,7 +137,7 @@ class StateEngine(SmartPlugin):
         for item in self.itemsApi.find_items("se_plugin"):
             if item.conf["se_plugin"] == "active":
                 try:
-                    abitem = StateEngineItem.SeItem(self.get_sh(), item, self)
+                    abitem = StateEngineItem.SeItem(self.__sh, item, self)
                     abitem.ab_alive = True
                     abitem.update_leave_action(self.__default_instant_leaveaction)
                     abitem.write_to_log()
@@ -161,9 +152,9 @@ class StateEngine(SmartPlugin):
         else:
             self.logger.info("StateEngine deactivated because no items have been found.")
 
-        self.__cli = StateEngineCliCommands.SeCliCommands(self.get_sh(), self._items, self.logger)
+        self.__cli = StateEngineCliCommands.SeCliCommands(self.__sh, self._items, self.logger)
         self.alive = True
-        self.get_sh().stateengine_plugin_functions.ab_alive = True
+        self.__sh.stateengine_plugin_functions.ab_alive = True
 
     # Stopping of plugin
     def stop(self):
@@ -176,7 +167,7 @@ class StateEngine(SmartPlugin):
             self._items[item].remove_all_schedulers()
 
         self.alive = False
-        self.get_sh().stateengine_plugin_functions.ab_alive = False
+        self.__sh.stateengine_plugin_functions.ab_alive = False
         self.logger.debug("stop method finished")
 
     # Determine if caller/source are contained in changed_by list
@@ -184,7 +175,7 @@ class StateEngine(SmartPlugin):
     # source: Source to check
     # changed_by: List of callers/source (element format <caller>:<source>) to check against
     def is_changed_by(self, caller, source, changed_by):
-        original_caller, original_source = StateEngineTools.get_original_caller(self.logger, caller, source)
+        original_caller, original_source = StateEngineTools.get_original_caller(self.__sh, self.logger, caller, source)
         for entry in changed_by:
             entry_caller, __, entry_source = entry.partition(":")
             if (entry_caller == original_caller or entry_caller == "*") and (
@@ -197,7 +188,7 @@ class StateEngine(SmartPlugin):
     # source: Source to check
     # changed_by: List of callers/source (element format <caller>:<source>) to check against
     def not_changed_by(self, caller, source, changed_by):
-        original_caller, original_source = StateEngineTools.get_original_caller(self.logger, caller, source)
+        original_caller, original_source = StateEngineTools.get_original_caller(self.__sh, self.logger, caller, source)
         for entry in changed_by:
             entry_caller, __, entry_source = entry.partition(":")
             if (entry_caller == original_caller or entry_caller == "*") and (
@@ -218,10 +209,12 @@ class StateEngine(SmartPlugin):
             finallist.append(self._items[i])
         return finallist
 
-    def get_graph(self, abitem, graphtype='link'):
+    def get_graph(self, abitem, graphtype='link', width=1, height=1):
         if isinstance(abitem, str):
             abitem = self._items[abitem]
-        webif = StateEngineWebif.WebInterface(self.__sh, abitem)
+        webif = StateEngineWebif.WebInterface(abitem)
+        webif.width = width
+        webif.height = height
         try:
             os.makedirs(self.path_join(self.get_plugin_dir(), 'webif/static/img/visualisations/'))
         except OSError:
@@ -240,11 +233,9 @@ class StateEngine(SmartPlugin):
                 except Exception:
                     formatted_date = "Unbekannt"
                 return f'<div style="margin-bottom:15px;">{self.translate("Letzte Aktualisierung:")} {formatted_date}<br></div>\
-                        <object type="image/svg+xml" data="static/img/visualisations/{abitem}.svg"\
-                        style="max-width: 100%; height: auto; width: auto;" id="visu_object">\
+                        <object type="image/svg+xml" data="static/img/visualisations/{abitem}.svg" id="visu_object">\
                         <iframe src="static/img/visualisations/{abitem}.svg">\
-                        <img src="static/img/visualisations/{abitem}.svg"\
-                        style="max-width: 100%; height: auto; width: auto;">\
+                        <img src="static/img/visualisations/{abitem}.svg">\
                         </iframe></object>'
             else:
                 return ''
@@ -261,21 +252,20 @@ class StateEngine(SmartPlugin):
             return '<h4>Can not show visualization.</h4> ' \
                    'Current issue: ' + str(ex) + '<br/>'
 
-
     def _test_visualization(self):
         if not VIS_ENABLED:
             return False
 
         img_path = self.path_join(self.get_plugin_dir(), 'webif/static/img/visualisations/se_test')
         graph = pydotplus.Dot('StateEngine', graph_type='digraph', splines='false',
-                                     overlap='scale', compound='false', imagepath=img_path)
+                              overlap='scale', compound='false', imagepath=img_path)
         graph.set_node_defaults(color='lightgray', style='filled', shape='box',
-                                       fontname='Helvetica', fontsize='10')
+                                fontname='Helvetica', fontsize='10')
         graph.set_edge_defaults(color='darkgray', style='filled', shape='box',
-                                       fontname='Helvetica', fontsize='10')
+                                fontname='Helvetica', fontsize='10')
 
         try:
             result = graph.write_svg(img_path, prog='fdp')
         except pydotplus.graphviz.InvocationException:
-            return False
-        return True
+            result =  False
+        return result

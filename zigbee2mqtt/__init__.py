@@ -25,6 +25,7 @@
 
 from datetime import datetime
 import json
+from logging import DEBUG
 
 from lib.model.mqttplugin import MqttPlugin
 
@@ -47,7 +48,7 @@ HANDLE_ATTR = 'attr_'
 class Zigbee2Mqtt(MqttPlugin):
     """ Main class of the Plugin. Does all plugin specific stuff and provides the update functions for the items """
 
-    PLUGIN_VERSION = '2.0.0'
+    PLUGIN_VERSION = '2.0.2'
 
     def __init__(self, sh, **kwargs):
         """ Initializes the plugin. """
@@ -55,15 +56,18 @@ class Zigbee2Mqtt(MqttPlugin):
         # Call init code of parent class (MqttPlugin)
         super().__init__()
 
-        self.logger.info(f'Init {self.get_shortname()} plugin {self.PLUGIN_VERSION}')
+        # self.logger = logging.getLogger(__name__)
+
+        self.logger.info(f'Init {self.get_fullname()} plugin {self.PLUGIN_VERSION}')
 
         # get the parameters for the plugin (as defined in metadata plugin.yaml):
-        self.z2m_base = self.get_parameter_value('base_topic').lower()
+        self.z2m_base = self.get_parameter_value('base_topic')
         self.cycle = self.get_parameter_value('poll_period')
         self.read_at_init = self.get_parameter_value('read_at_init')
         self._z2m_gui = self.get_parameter_value('z2m_gui')
+        self._pause_item_path = self.get_parameter_value('pause_item')
 
-        # bool_values is only good if used internally, because MQTT data is 
+        # bool_values is only good if used internally, because MQTT data is
         # usually sent in JSON. So just make this easy...
         self.bool_values = [False, True]
 
@@ -115,6 +119,8 @@ class Zigbee2Mqtt(MqttPlugin):
         self.logger.debug("Run method called")
 
         self.alive = True
+        if self._pause_item:
+            self._pause_item(False, self.get_fullname())
 
         # start subscription to all topics
         self.start_subscriptions()
@@ -134,8 +140,10 @@ class Zigbee2Mqtt(MqttPlugin):
         """ Stop method for the plugin """
 
         self.alive = False
+        if self._pause_item:
+            self._pause_item(True, self.get_fullname())
         self.logger.debug("Stop method called")
-        self.scheduler_remove('z2m_c')
+        self.scheduler_remove('z2m_cycle')
 
         # stop subscription to all topics
         self.stop_subscriptions()
@@ -154,15 +162,12 @@ class Zigbee2Mqtt(MqttPlugin):
                         can be sent to the knx with a knx write function within the knx plugin.
         """
 
-        # remove this block when its included in smartplugin.py,
-        # replace with super().parse_item(item)
-        # check for suspend item
-        if item.property.path == self._suspend_item_path:
-            self.logger.debug(f'suspend item {item.property.path} registered')
-            self._suspend_item = item
+        # check for pause item
+        if item.property.path == self._pause_item_path:
+            self.logger.debug(f'pause item {item.property.path} registered')
+            self._pause_item = item
             self.add_item(item, updating=True)
             return self.update_item
-        # end block
 
         if self.has_iattr(item.conf, Z2M_ATTR):
             self.logger.debug(f"parsing item: {item}")
@@ -172,14 +177,7 @@ class Zigbee2Mqtt(MqttPlugin):
                 self.logger.warning(f"parsed item {item} has no {Z2M_TOPIC} set, ignoring")
                 return
 
-            attr = self.get_iattr_value(item.conf, Z2M_ATTR).lower()
-
-            if item.type() == 'bool':
-                bval = self.get_iattr_value(item.conf, Z2M_BVAL)
-                if bval == []:
-                    bval = None
-                if bval is None or type(bval) is not list:
-                    bval = self.bool_values
+            attr = self.get_iattr_value(item.conf, Z2M_ATTR)
 
             # invert read-only/write-only logic to allow read/write
             write = not self.get_iattr_value(item.conf, Z2M_RO, False)
@@ -198,6 +196,9 @@ class Zigbee2Mqtt(MqttPlugin):
                 'write': write,
             }
             if item.type() == 'bool':
+                bval = self.get_iattr_value(item.conf, Z2M_BVAL)
+                if bval is None or bval == [] or type(bval) is not list:
+                    bval = self.bool_values
                 data['bool_values'] = bval
 
             self._devices[device][attr].update(data)
@@ -216,7 +217,7 @@ class Zigbee2Mqtt(MqttPlugin):
 
     def remove_item(self, item):
         if item not in self._plg_item_dict:
-            return
+            return False
 
         mapping = self.get_item_mapping(item)
         if mapping:
@@ -239,9 +240,9 @@ class Zigbee2Mqtt(MqttPlugin):
         except ValueError:
             pass
 
-        super().remove_item(item)
+        return super().remove_item(item)
 
-    def update_item(self, item, caller='', source=None, dest=None):
+    def update_item(self, item, caller=None, source=None, dest=None):
         """
         Item has been updated
 
@@ -252,7 +253,20 @@ class Zigbee2Mqtt(MqttPlugin):
         """
         self.logger.debug(f"update_item: {item} called by {caller} and source {source}")
 
-        if self.alive and not self.suspended and not caller.startswith(self.get_shortname()):
+        # ignore calls explicitly coming from self (typicalls from on_mqtt_msg -> caller = self.get_fullname() + ":" + device)
+        if caller == self.get_fullname() or (type(caller) is str and caller.startswith(self.get_fullname())):
+            return
+
+        # check for pause item
+        if item is self._pause_item:
+            self.logger.debug(f'pause item changed to {item()}')
+            if item() and self.alive:
+                self.stop()
+            elif not item() and not self.alive:
+                self.run()
+            return
+
+        if self.alive:
 
             if item in self._items_write:
 
@@ -307,11 +321,16 @@ class Zigbee2Mqtt(MqttPlugin):
 
                 # create payload
                 if value is not None:
-                    payload = json.dumps({
-                        attr: value
-                    })
+                    try:
+                        payload = json.dumps({
+                            attr: value
+                        })
+                    # catch 'datetime is not JSON serializable' error.
+                    # TODO: find way to keep data
+                    except TypeError:
+                        payload = ''
                 else:
-                    payload = None
+                    payload = ''
 
                 self.publish_z2m_topic(device, topic_3, topic_4, topic_5, payload, item, bool_values=bool_values)
             else:
@@ -404,7 +423,7 @@ class Zigbee2Mqtt(MqttPlugin):
         for attr in payload:
             if attr in self._devices[device]:
                 item = self._devices[device][attr].get('item')
-                src = self.get_shortname() + ':' + device
+                caller = self.get_fullname() + ':' + device
 
                 # check handlers
                 if hasattr(self, HANDLE_IN_PREFIX + HANDLE_ATTR + attr):
@@ -416,8 +435,14 @@ class Zigbee2Mqtt(MqttPlugin):
                 self.logger.debug(f"attribute: {attr}, value: {value}, item: {item}")
 
                 if item is not None:
-                    item(value, src)
-                    self.logger.info(f"{device}: Item '{item}' set to value {value}")
+                    item(value, caller)
+                    if device == 'bridge' and (isinstance(value, list) or isinstance(value, dict)):
+                        if self.logger.isEnabledFor(DEBUG):
+                            self.logger.debug(f"{device}: Item '{item}' set to value {value}")
+                        else:
+                            self.logger.info(f"{device}: Item '{item}' set to value {str(value)[:80]}[...] (enable debug log for full output)")
+                    else:
+                        self.logger.info(f"{device}: Item '{item}' set to value {value}")
                 else:
                     self.logger.info(f"{device}: No item for attribute '{attr}' defined to set to {value}")
 
@@ -611,9 +636,9 @@ class Zigbee2Mqtt(MqttPlugin):
                     return
 
                 try:
-                    item_r(r, self.get_shortname())
-                    item_g(g, self.get_shortname())
-                    item_b(b, self.get_shortname())
+                    item_r(r, self.get_fullname())
+                    item_g(g, self.get_fullname())
+                    item_b(b, self.get_fullname())
                 except Exception as e:
                     self.logger.warning(f'Trying to set rgb color values for color item {item}, but appropriate subitems ({item_r}, {item_g}, {item_b}) missing: {e}')
 
@@ -621,7 +646,7 @@ class Zigbee2Mqtt(MqttPlugin):
                     target = self._devices[device]['color_rgb']['item']
                 except (AttributeError, KeyError):
                     return
-                target(f'{r:x}{g:x}{b:x}', self.get_shortname())
+                target(f'{r:x}{g:x}{b:x}', self.get_fullname())
 
     def _handle_in_attr_brightness(self, device: str, attr: str, payload={}, item=None):
         """ automatically set brightness percent """
@@ -638,7 +663,7 @@ class Zigbee2Mqtt(MqttPlugin):
                 pass
 
             if target is not None:
-                target(payload['brightness'] / 2.54, self.get_shortname())
+                target(payload['brightness'] / 2.54, self.get_fullname())
 
     def _handle_in_attr_color_temp(self, device: str, attr: str, payload={}, item=None):
         """ automatically set color temp in kelvin """
@@ -655,7 +680,7 @@ class Zigbee2Mqtt(MqttPlugin):
                 pass
 
             if target is not None:
-                target(int(1000000 / payload['color_temp']), self.get_shortname())
+                target(int(1000000 / payload['color_temp']), self.get_fullname())
 
 #
 # handlers out: activated when values are sent out from shng
@@ -760,7 +785,7 @@ class Zigbee2Mqtt(MqttPlugin):
                         pass
 
                     if target is not None:
-                        target(col[color], self.get_shortname())
+                        target(col[color], self.get_fullname())
 
                 self._color_sync_from_rgb(self._devices[device]['state']['item'])
 
@@ -786,15 +811,15 @@ class Zigbee2Mqtt(MqttPlugin):
         c = Converter()
         return c.rgb_to_xyb(r, g, b)
 
-    def _color_sync_to_rgb(self, item, source=''):
+    def _color_sync_to_rgb(self, item, caller=None):
         """ sync xy color to rgb, needs struct items """
-        self._item_color_xy_to_rgb(item.color, item.brightness, item.color.r, item.color.g, item.color.b, source)
+        self._item_color_xy_to_rgb(item.color, item.brightness, item.color.r, item.color.g, item.color.b, caller)
 
-    def _color_sync_from_rgb(self, item, source='', rgb=''):
+    def _color_sync_from_rgb(self, item, caller=None, rgb=''):
         """ sync rgb color to xy, needs struct items """
-        self._item_color_rgb_to_xy(item.color.r, item.color.g, item.color.b, item.color, item.brightness, source)
+        self._item_color_rgb_to_xy(item.color.r, item.color.g, item.color.b, item.color, item.brightness, caller)
 
-    def _item_color_xy_to_rgb(self, item_xy, item_brightness, item_r, item_g, item_b, source=''):
+    def _item_color_xy_to_rgb(self, item_xy, item_brightness, item_r, item_g, item_b, caller=None):
         """ convert xy and brightness item data to rgb and assign """
         try:
             x = item_xy()['x']
@@ -815,13 +840,13 @@ class Zigbee2Mqtt(MqttPlugin):
         r, g, b = self._color_xy_to_rgb(x=x, y=y, brightness=bright)
 
         try:
-            item_r(r, source)
-            item_g(g, source)
-            item_b(b, source)
+            item_r(r, caller)
+            item_g(g, caller)
+            item_b(b, caller)
         except (ValueError, TypeError):
             self.logger.warning(f"Error on assigning rgb values {r},{g},{b} to items {item_r}, {item_g}, {item_b}")
 
-    def _item_color_rgb_to_xy(self, item_r, item_g, item_b, item_xy, item_brightness, source=''):
+    def _item_color_rgb_to_xy(self, item_r, item_g, item_b, item_xy, item_brightness, caller=None):
         """ convert r, g, b items data to xy and brightness and assign """
         try:
             r = item_r()
@@ -834,8 +859,8 @@ class Zigbee2Mqtt(MqttPlugin):
         x, y, bright = self._color_rgb_to_xy(r, g, b)
 
         try:
-            item_xy({'x': x, 'y': y}, source)
-            item_brightness(bright * 254, source)
+            item_xy({'x': x, 'y': y}, caller)
+            item_brightness(bright * 254, caller)
         except (ValueError, TypeError):
             self.logger.warning(f"Error on assigning values {x},{y}, {bright} to items {item_xy} and {item_brightness}")
             return

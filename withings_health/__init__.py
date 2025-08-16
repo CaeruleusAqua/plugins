@@ -24,19 +24,22 @@
 #
 #########################################################################
 
-import cherrypy
 import datetime
-from lib.model.smartplugin import *
-from lib.shtime import Shtime
+
 from oauthlib.oauth2.rfc6749.errors import MissingTokenError
 from typing_extensions import Final
 from withings_api import AuthScope, WithingsApi, WithingsAuth
 from withings_api.common import Credentials, Credentials2, CredentialsType, get_measure_value, MeasureType
+
+from lib.model.smartplugin import SmartPlugin
+from lib.shtime import Shtime
+from lib.utils import Utils
+
 from .webif import WebInterface
 
 
 class WithingsHealth(SmartPlugin):
-    PLUGIN_VERSION = "1.8.3"
+    PLUGIN_VERSION = "1.8.4"
 
     def __init__(self, sh):
         super().__init__()
@@ -64,12 +67,12 @@ class WithingsHealth(SmartPlugin):
         self.logger.debug(
             "Updating tokens to items: access_token: {} token_expires_in: {} token_expiry: {} token_type: {} refresh_token: {}".
                 format(credentials2.access_token, credentials2.expires_in,
-                       int((datetime.datetime.utcnow() - datetime.datetime(1970, 1, 1)).total_seconds()) + int(
+                       int((self.shtime.utcnow() - datetime.datetime(1970, 1, 1)).total_seconds()) + int(
                            credentials2.expires_in), credentials2.token_type,
                        credentials2.refresh_token))
         self.get_item('access_token')(credentials2.access_token)
         self.get_item('token_expiry')(
-            int((datetime.datetime.utcnow() - datetime.datetime(1970, 1, 1)).total_seconds()) + int(
+            int((self.shtime.utcnow() - datetime.datetime(1970, 1, 1)).total_seconds()) + int(
                 credentials2.expires_in))
         self.get_item('token_type')(credentials2.token_type)
         self.get_item('refresh_token')(credentials2.refresh_token)
@@ -327,7 +330,7 @@ class WithingsHealth(SmartPlugin):
         return self._consumer_secret
 
     def get_callback_url(self):
-        ip = self.mod_http.get_local_ip_address()
+        ip = Utils.get_local_ipv4_address()
         port = self.mod_http.get_local_port()
         web_ifs = self.mod_http.get_webifs_for_plugin(self.get_shortname())
         for web_if in web_ifs:

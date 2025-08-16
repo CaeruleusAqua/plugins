@@ -11,7 +11,7 @@ plugin:
     #documentation: https://www.smarthomeng.de/user/plugins/alexa4p3/user_doc.html       # url of documentation
     support: https://knx-user-forum.de/forum/supportforen/smarthome-py/1021150-amazon-alexa-plugin
     version: 1.0.2                   # Plugin version
-    sh_minversion: 1.5.2             # minimum shNG version to use this plugin
+    sh_minversion: '1.5.2'             # minimum shNG version to use this plugin
     multi_instance: False            # plugin supports multi instance
     classname: Alexa4P3              # class containing the plugin
     state: ready                     # State of the Plugin
@@ -152,15 +152,14 @@ item_attributes:
             en: 'alternative Alexa device names to access the device'
 
     alexa_range_delta:
-        type: str
+        type: num
         mandatory: False
         description:
-            de: ''
-            en: ''
-
+            de: 'Wert für das Stufenweise erhöhen eines Range-Controllers - z.b. Rolladen fahre hoch  - Wert von range_delta wird verwendet'
+            en: 'Value to increase Value step by step for a range-controller - example : lift blind - value of range_delta will be used'
     alexa_color_temp_delta:
-        type: str
+        type: num
         mandatory: False
         description:
-            de: ''
-            en: ''
+            de: 'Wert in Kelvin um den ein Tunable White Licht wärmer / kälter gestellt werden soll - Bsp.: 2200'
+            en: 'Value in kelvin to increase/decrease Value of a tunable white light, for example : 2200'        

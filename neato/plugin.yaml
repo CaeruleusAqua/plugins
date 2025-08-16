@@ -16,7 +16,7 @@ plugin:
     sh_minversion: 1.8.0            # minimum shNG version to use this plugin
 #    sh_maxversion:                 # maximum shNG version to use this plugin (leave empty if latest)
     multi_instance: False           # plugin supports multi instance
-    restartable: unknown
+    restartable: True
     classname: Neato         # class containing the plugin
 
 parameters:
@@ -97,6 +97,7 @@ item_attributes:
           - command_goToBaseAvailable
           - command_startAvailable
           - clean_room
+          - online_status
 
 item_structs:
     Neato:

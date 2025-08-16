@@ -40,7 +40,7 @@ class Robonect(MqttPlugin):
     Main class of the Plugin. Does all plugin specific stuff and provides
     the update functions for the items
     """
-    PLUGIN_VERSION = '1.0.4'  # (must match the version specified in plugin.yaml)
+    PLUGIN_VERSION = '1.0.5'  # (must match the version specified in plugin.yaml)
     STATUS_TYPES = ['mower/status', 'mower/status/text', 'status_text_translated', 'mower/distance', 'mower/status/duration',
                     'mower/statistic/hours',
                     'mower/stopped', 'mower/mode', 'mower/mode/text', 'mode_text_translated', 'mower/battery/charge', 'blades_quality',
@@ -184,7 +184,7 @@ class Robonect(MqttPlugin):
         if self.alive and caller != self.get_shortname():
             # code to execute if the plugin is not stopped
             # and only, if the item has not been changed by this this plugin:
-            self.logger.info("Update item: {}, item has been changed outside this plugin".format(item.id()))
+            self.logger.info("Update item: {}, item has been changed outside this plugin".format(item.property.path))
 
             mqtt_id = self.get_iattr_value(item.conf, 'robonect_data_type')
             topic = '%s/%s' % (self._topic_prefix, mqtt_id)
