@@ -34,11 +34,16 @@ import string
 # Necessary python package for funktion "generate_code_verifier":
 from authlib.common.security import generate_token
 
-AUTHORIZE_URL = 'https://iam.viessmann.com/idp/v3/authorize'
-TOKEN_URL = 'https://iam.viessmann.com/idp/v3/token'
+#AUTHORIZE_URL = 'https://iam.viessmann.com/idp/v3/authorize'
+AUTHORIZE_URL = 'https://iam.viessmann-climatesolutions.com/idp/v3/authorize'
+#TOKEN_URL = 'https://iam.viessmann.com/idp/v3/token'
+TOKEN_URL = 'https://iam.viessmann-climatesolutions.com/idp/v3/token'
+#API_URL = 'https://api.viessmann.com'
+API_URL = 'https://api.viessmann-climatesolutions.com'
+
 
 class Vicare(SmartPlugin):
-    PLUGIN_VERSION = '1.9.5'
+    PLUGIN_VERSION = '1.9.6'
 
     def __init__(self, sh):
         """
@@ -285,7 +290,7 @@ class Vicare(SmartPlugin):
         try:
             responseGetToken = self.session.post(TOKEN_URL, headers = headers, data = data, verify=False, timeout=4)
         except Exception as e:
-            self.logger.error(f"Exception occured during retrieve token: {e}")
+            self.logger.error(f"Exception occurred during retrieve token: {e}")
             return False
 
         if responseGetToken is None:
@@ -375,7 +380,7 @@ class Vicare(SmartPlugin):
         try:
             response = self.session.get(url, headers = headers, verify=False, timeout=4)
         except Exception as e:
-            self.logger.warning(f"Exception occured during pollUrlInterface: {e}")
+            self.logger.warning(f"Exception occurred during pollUrlInterface: {e}")
         return response
 
     def checkErrors(self, response):
@@ -384,13 +389,15 @@ class Vicare(SmartPlugin):
         if 'error' in responseJson:
             if 'message' in responseJson:
                 message = responseJson['message']
-                self.logger.error(f"Error occured: {message}")
+                self.logger.error(f"Error occurred: {message}")
             return True
         return False
 
 
     def pollInstallationId(self):
-        url = f"https://api.viessmann.com/iot/v1/equipment/installations"
+        #old url = f"https://api.viessmann.com/iot/v1/equipment/installations"
+        url = f"{API_URL}/iot/v1/equipment/installations"
+
         response = self.pollUrlInterface(url)
         
         if response is None:
@@ -423,7 +430,9 @@ class Vicare(SmartPlugin):
                     self.logger.info(f"InstallationId is {self.installationId}")
 
     def pollSerial(self):
-        url = f"https://api.viessmann.com/iot/v1/equipment/gateways"
+        #old url = f"https://api.viessmann.com/iot/v1/equipment/gateways"
+        url = f"{API_URL}/iot/v1/equipment/gateways"
+
         response = self.pollUrlInterface(url)
 
         if response is None:
@@ -457,7 +466,9 @@ class Vicare(SmartPlugin):
             self.logger.debug(f"pollSerial, invalid installationId, aborting!")
             return
 
-        url = f"https://api.viessmann.com/iot/v1/equipment/installations/{self.installationId}/gateways/{self.gatewaySerial}/devices"
+        #old url = f"https://api.viessmann.com/iot/v1/equipment/installations/{self.installationId}/gateways/{self.gatewaySerial}/devices"
+        url = f"{API_URL}/iot/v1/equipment/installations/{self.installationId}/gateways/{self.gatewaySerial}/devices"
+
         response = self.pollUrlInterface(url)
         
         if response is None:
@@ -538,7 +549,9 @@ class Vicare(SmartPlugin):
             self.logger.debug(f"pollFeatures, invalid deviceId, aborting!")
             return
 
-        url = f"https://api.viessmann.com/iot/v2/features/installations/{self.installationId}/gateways/{self.gatewaySerial}/devices/{self.deviceId}/features"
+        #old url = f"https://api.viessmann.com/iot/v2/features/installations/{self.installationId}/gateways/{self.gatewaySerial}/devices/{self.deviceId}/features"
+        url = f"{API_URL}/iot/v2/features/installations/{self.installationId}/gateways/{self.gatewaySerial}/devices/{self.deviceId}/features"
+
         response = self.pollUrlInterface(url)
         if response is None:
             return
@@ -614,13 +627,13 @@ class Vicare(SmartPlugin):
                             try:
                                 value = properties[path[0]]
                             except Exception as e:
-                                self.logger.error(f"Exception occured in path for item {item}: {e}")
+                                self.logger.error(f"Exception occurred in path for item {item}: {e}")
                             else:
                                 for k in range(1,length_path):
                                     try:
                                         value = value[path[k]]
                                     except Exception as e:
-                                        self.logger.error(f"Exception occured in path loop for item {item}: {e}")
+                                        self.logger.error(f"Exception occurred in path loop for item {item}: {e}")
                                         value = None
                                 
                                     #self.logger.debug(f"Debug k={k}, value: {value}")
