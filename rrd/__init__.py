@@ -2,14 +2,14 @@
 # vim: set encoding=utf-8 tabstop=4 softtabstop=4 shiftwidth=4 expandtab
 #########################################################################
 #  Copyright 2012-2013 Marcus Popp                         marcus@popp.mx
-#  Copyright 2020 Bernd Meiners                     Bernd.Meiners@mail.de
+#  Copyright 2020,2025 Bernd Meiners                Bernd.Meiners@mail.de
+#  Copyright 2025 ghciv6
 #########################################################################
 #  This file is part of SmartHomeNG.
 #  https://www.smarthomeNG.de
 #  https://knx-user-forum.de/forum/supportforen/smarthome-py
 #
-#  Sample plugin for new plugins to run with SmartHomeNG version 1.4 and
-#  upwards.
+#  rrd plugin to run with SmartHomeNG version 1.10 and upwards.
 #
 #  SmartHomeNG is free software: you can redistribute it and/or modify
 #  it under the terms of the GNU General Public License as published by
@@ -26,9 +26,10 @@
 #
 #########################################################################
 
-from lib.module import Modules
-from lib.model.smartplugin import *
+from lib.model.smartplugin import SmartPlugin
 from lib.item import Items
+
+from .webif import WebInterface
 
 import datetime
 import functools
@@ -50,7 +51,7 @@ class RRD(SmartPlugin):
     Documentation can be found at `<https://pythonhosted.org/rrdtool/>`_
     """
 
-    PLUGIN_VERSION = '1.6.2'
+    PLUGIN_VERSION = '1.7.0'
 
     def __init__(self, sh):
         """
@@ -59,10 +60,6 @@ class RRD(SmartPlugin):
 
         # Call init code of parent class (SmartPlugin)
         super().__init__()
-
-        from bin.smarthome import VERSION
-        if '.'.join(VERSION.split('.', 2)[:2]) <= '1.5':
-            self.logger = logging.getLogger(__name__)
 
         # get the parameters for the plugin (as defined in metadata plugin.yaml):
         rrd_dir = self.get_parameter_value('rrd_dir')
@@ -75,7 +72,7 @@ class RRD(SmartPlugin):
             try:
                 os.makedirs(self._rrd_dir)
             except:
-                self.logger.error("Unable to create directory '{}'".format(self._rrd_dir))
+                self.logger.error(f"Unable to create directory '{self._rrd_dir}'")
 
         self._rrds = {}
         self.step = self.get_parameter_value('step')
@@ -83,9 +80,13 @@ class RRD(SmartPlugin):
         # Initialization code goes here
         if not REQUIRED_PACKAGE_IMPORTED:
             self._init_complete = False
-            self.logger.error("{}: Unable to import Python package 'rrdtool'".format(self.get_fullname()))
+            self.logger.error(f"{self.get_fullname()}: Unable to import Python package 'rrdtool'")
             return
 
+        self.init_webinterface(WebInterface)
+        # if plugin should not start without web interface
+        # if not self.init_webinterface():
+        #     self._init_complete = False
         return
 
     def run(self):
@@ -122,7 +123,7 @@ class RRD(SmartPlugin):
 
         # set database filename
         dbname = ''
-        self.logger.debug("parse item: {}".format(item))
+        self.logger.debug(f"parse item: {item}")
         if self.has_iattr(item.conf,'rrd_ds_name'):
             dbname = self.get_iattr_value(item.conf, 'rrd_ds_name')
         if not dbname:
@@ -149,7 +150,7 @@ class RRD(SmartPlugin):
             no_series = self.get_iattr_value(item.conf,'rrd_no_series')
 
         if no_series:
-            self.logger.warning("Attribute rrd_no_series is set to True, no data series will be provided for item {}".format(item.property.path))
+            self.logger.warning("Attribute rrd_no_series is set to True, no data series will be provided for item {item.property.path}")
         else:
             item.series = functools.partial(self._series, item=item.property.path)
             item.db = functools.partial(self._single, item=item.property.path)
@@ -162,6 +163,11 @@ class RRD(SmartPlugin):
                 item.set(last, 'RRDtool')
 
     def _update_cycle(self):
+        """
+        this is called by scheduler to update all items at the same time
+        it is currently fixed by parameter "step" from plugin.yaml
+        thus any other step you would set for an item would not be served
+        """
         for itempath in self._rrds:
             rrd = self._rrds[itempath]
             if rrd['type'] == 'GAUGE':
@@ -174,7 +180,7 @@ class RRD(SmartPlugin):
                     value
                 )
             except Exception as e:
-                self.logger.warning("RRD: error updating {}: {}".format(itempath, e))
+                self.logger.warning(f"RRD: error updating {itempath}: {e}")
                 continue
 
 
@@ -193,50 +199,50 @@ class RRD(SmartPlugin):
         if item in self._rrds:
             rrd = self._rrds[item]
         else:
-            self.logger.warning("RRDtool: not enabled for {}".format(item))
+            self.logger.warning(f"RRDtool: not enabled for {item}")
             return
-        query = ["{}".format(rrd['rrdb'])]
+        query = [f"{rrd['rrdb']}"]
         # prepare consolidation function
-        if func == 'avg':
+        if func == 'avg' or func == 'raw':
             query.append('AVERAGE')
         elif func == 'max':
             if not rrd['max']:
-                self.logger.warning("RRDtool: unsupported consolidation function {} for {}".format(func, item))
+                self.logger.warning(f"RRDtool: unsupported consolidation function {func} for {item}")
                 return
             query.append('MAX')
         elif func == 'min':
             if not rrd['min']:
-                self.logger.warning("RRDtool: unsupported consolidation function {} for {}".format(func, item))
+                self.logger.warning(f"RRDtool: unsupported consolidation function {func} for {item}")
                 return
             query.append('MIN')
         elif func == 'raw':
             query.append('AVERAGE')
-            self.logger.warning("RRDtool: unsupported consolidation function {} for {}. Using average instead".format(func, item))
+            self.logger.warning(f"RRDtool: unsupported consolidation function {func} for {item}. Using average instead")
         else:
-            self.logger.warning("RRDtool: unsupported consolidation function {} for {}".format(func, item))
+            self.logger.warning(f"RRDtool: unsupported consolidation function {func} for {item}")
             return
         # set time frame for query
         if start.isdigit():
-            query.extend(['--start', "{}".format(start)])
+            query.extend(['--start', f"{start}"])
         else:
-            query.extend(['--start', "now-{}".format(start)])
+            query.extend(['--start', f"now-{start}"])
         if end != 'now':
             if end.isdigit():
-                query.extend(['--end', "{}".format(end)])
+                query.extend(['--end', f"{end}"])
             else:
-                query.extend(['--end', "now-{}".format(end)])
+                query.extend(['--end', f"now-{end}"])
         if step is not None:
             query.extend(['--resolution', step])
         # run query
         try:
             meta, name, data = rrdtool.fetch(*query)
         except Exception as e:
-            self.logger.warning("error reading {0} data: {1}".format(item, e))
+            self.logger.warning(f"error reading {item} data: {e}")
             return None
 
         # postprocess values
         if sid is None:
-            sid = "{}|{}|{}|{}|{}".format(item,func,start,end,count)
+            sid = f"{item}|{func}|{start}|{end}|{count}"
         reply = {'cmd': 'series', 'series': None, 'sid': sid}
         istart, iend, istep = meta
         mstart = istart * 1000
@@ -247,29 +253,32 @@ class RRD(SmartPlugin):
         for i, v in enumerate(data):
             if v[0] is not None:
                 tuples.append((mstart + i * mstep, v[0]))
+                iend = int( ( mstart + i * mstep ) / 1000 ) # added by ghciv6
         reply['series'] = sorted(tuples)
-        reply['params'] = {'update': True, 'item': item, 'func': func, 'start': str(iend), 'end': str(iend + istep), 'step': str(istep), 'sid': sid}
+        #reply['params'] = {'update': True, 'item': item, 'func': func, 'start': str(iend), 'end': str(iend + istep), 'step': str(istep), 'sid': sid} # old
+        reply['params'] = {'update': True, 'item': item, 'func': func, 'start': str(iend + istep), 'end': str(iend + 2 * istep), 'step': str(istep), 'sid': sid} # changed by ghciv6
         reply['update'] = self.get_sh().now() + datetime.timedelta(seconds=istep)
-        self.logger.warning("Returning series for {} from {} to {} with {} values".format(sid, iend, iend+istep, len(tuples) ))
+        #self.logger.warning(f"Returning series for {sid} from {iend} to {iend+istep} with {len(tuples)} values") # old
+        self.logger.info(f"Returning series for {sid} from {istart} to {iend} with {len(tuples)} values") # changed by ghciv6
         return reply
 
     def _single(self, func, start='1d', end='now', item=None):
         """
         Reads a single value from rrd.
 
-        :param func: String with consolidating function 'avg', 'min', 'max', 'last' to use
+        :param func: String with consolidating function 'avg' (or 'raw'), 'min', 'max', 'last' to use
         :param start: String containing a start time
         :param end: String containing a start time
         """
         if item in self._rrds:
             rrd = self._rrds[item]
         else:
-            self.logger.warning("RRDtool: not enabled for {}".format(item))
+            self.logger.warning(f"RRDtool: not enabled for {item}")
             return
 
         # prepare consolidation function
-        query = ["{}".format(rrd['rrdb'])]
-        if func == 'avg':
+        query = [f"{rrd['rrdb']}"]
+        if func == 'avg' or func == 'raw':
             query.append('AVERAGE')
         elif func == 'max':
             if rrd['max']:
@@ -284,35 +293,35 @@ class RRD(SmartPlugin):
         elif func == 'last':
             query.append('AVERAGE')
         elif func == 'raw':
-            self.logger.warning("RRDtool: unsupported consolidation function {} for {}. Using average instead".format(func, item))
+            self.logger.warning(f"RRDtool: unsupported consolidation function {func} for {item}. Using average instead")
             query.append('AVERAGE')
         else:
-            self.logger.warning("RRDtool: unsupported consolidation function {} for {}".format(func, item))
+            self.logger.warning(f"RRDtool: unsupported consolidation function {func} for {item}")
             return
 
         # set time frame for query
         if start.isdigit():
-            query.extend(['--start', "{}".format(start)])
+            query.extend(['--start', f"{start}"])
         else:
-            query.extend(['--start', "now-{}".format(start)])
+            query.extend(['--start', f"now-{start}"])
         if end != 'now':
             if end.isdigit():
-                query.extend(['--end', "{}".format(end)])
+                query.extend(['--end', f"{end}"])
             else:
-                query.extend(['--end', "now-{}".format(end)])
+                query.extend(['--end', f"now-{end}"])
 
         # execute query
         try:
             meta, name, data = rrdtool.fetch(*query)
         except Exception as e:
-            self.logger.warning("error reading {0} data: {1}".format(item, e))
+            self.logger.warning(f"error reading {item} data: {e}")
             return None
 
         # unpack returned values
         values = [v[0] for v in data if v[0] is not None]
 
         # postprocess for consolidation
-        if func == 'avg':
+        if func == 'avg' or func == 'raw':
             if len(values) > 0:
                 return sum(values) / len(values)
         elif func == 'min':
@@ -325,7 +334,7 @@ class RRD(SmartPlugin):
             if len(values) > 0:
                 return values[-1]
         elif func == 'raw':
-            self.logger.warning("Unsupported consolidation function {0} for {1}. Using last instead".format(func, item))
+            self.logger.warning(f"Unsupported consolidation function {func} for {item}. Using last instead")
             if len(values) > 0:
                 return values[-1]
 
@@ -337,24 +346,24 @@ class RRD(SmartPlugin):
         args = [rrd['rrdb']]
         item_id = rrd['id'].rpartition('.')[2][:19]
 
-        args.append("DS:{}:{}:{}:U:U".format(item_id, rrd['type'], str(2 * rrd['step'])))
+        args.append(f"DS:{item_id}:{rrd['type']}:{str(2 * rrd['step'])}:U:U")
         if rrd['min']:
-            args.append('RRA:MIN:0.5:{}:1825'.format(int(86400 / rrd['step'])))  # 24h/5y
+            args.append(f"RRA:MIN:0.5:{int(86400 / rrd['step'])}:1825")  # 24h/5y
         if rrd['max']:
-            args.append('RRA:MAX:0.5:{}:1825'.format(int(86400 / rrd['step'])))  # 24h/5y
+            args.append(f"RRA:MAX:0.5:{int(86400 / rrd['step'])}:1825")  # 24h/5y
         args.extend(['--step', str(rrd['step'])])
 
         if rrd['type'] == 'GAUGE':
-            args.append('RRA:AVERAGE:0.5:1:{}'.format(int(86400 / rrd['step']) * 7 + 8))  # 7 days
-            args.append('RRA:AVERAGE:0.5:{}:1536'.format(int(1800 / rrd['step'])))  # 0.5h/32 days
-            args.append('RRA:AVERAGE:0.5:{}:1600'.format(int(21600 / rrd['step'])))  # 6h/400 days
-            args.append('RRA:AVERAGE:0.5:{}:1826'.format(int(86400 / rrd['step'])))  # 24h/5y
-            args.append('RRA:AVERAGE:0.5:{}:1300'.format(int(604800 / rrd['step'])))  # 7d/25y
+            args.append(f"RRA:AVERAGE:0.5:1:{int(86400 / rrd['step']) * 7 + 8}")    # 7 days
+            args.append(f"RRA:AVERAGE:0.5:{int(1800 / rrd['step'])}:1536")          # 0.5h/32 days
+            args.append(f"RRA:AVERAGE:0.5:{int(21600 / rrd['step'])}:1600")         # 6h/400 days
+            args.append(f"RRA:AVERAGE:0.5:{int(86400 / rrd['step'])}:1826")         # 24h/5y
+            args.append(f"RRA:AVERAGE:0.5:{int(604800 / rrd['step'])}:1300")        # 7d/25y
         elif rrd['type'] == 'COUNTER':
-            args.append('RRA:AVERAGE:0.5:{}:1826'.format(int(86400 / rrd['step'])))  # 24h/5y
-            args.append('RRA:AVERAGE:0.5:{}:1300'.format(int(604800 / rrd['step'])))  # 7d/25y
+            args.append(f"RRA:AVERAGE:0.5:{int(86400 / rrd['step'])}:1826")         # 24h/5y
+            args.append(f"RRA:AVERAGE:0.5:{int(604800 / rrd['step'])}:1300")        # 7d/25y
         try:
             rrdtool.create(*args)
-            self.logger.debug("Creating rrd ({0}) for {1}.".format(rrd['rrdb'], rrd['item']))
+            self.logger.debug(f"Creating rrd ({rrd['rrdb']}) for {rrd['item']}.")
         except Exception as e:
-            self.logger.warning("Error creating rrd ({0}) for {1}: {2}".format(rrd['rrdb'], rrd['item'], e))
+            self.logger.warning(f"Error creating rrd ({rrd['rrdb']}) for {rrd['item']}: {e}")
