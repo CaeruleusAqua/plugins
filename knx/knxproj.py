@@ -308,3 +308,5 @@ def _parse_knxproject(filename, password=None):
     except Exception as e: 
         print("Error {} occurred".format(e))
     return GAs
+
+
